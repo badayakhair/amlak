@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>نظام إدارة الأملاك</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9,22 9,12 15,12 15,22"/></svg>
+    نظام إدارة الأملاك الذكي
+  </div>
+  <div id="userBar" style="margin-left:auto;margin-right:14px;align-items:center;gap:10px;font-size:12px;display:none"><span id="userName" style="font-weight:500"></span><span id="userRoleLabel" style="background:rgba(255,255,255,.15);padding:2px 8px;border-radius:10px;font-size:10px"></span><button class="btn btn-sm" onclick="openModal('pwdModal')" style="background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.2);padding:3px 10px">🔑</button><button class="btn btn-sm" onclick="doLogout()" style="background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.2);padding:3px 10px">خروج</button></div><div id="topAlertBadge" style="display:none;margin-inline-start:10px;background:#9B1C1C;color:#fff;border-radius:20px;padding:3px 9px;font-size:11px;font-weight:600"></div><div id="topDate" style="font-size:11px;opacity:.7"></div>
+</div>
+
+<div class="nav" id="mainNav">
+  <div class="tab active" onclick="nav('dashboard',this)">📊 لوحة التحكم</div>
+  <div class="tab" onclick="nav('map',this)">🗺️ خريطة المباني</div>
+  <div class="tab" onclick="nav('contracts',this)">📋 العقود</div>
+  <div class="tab" onclick="nav('manage',this)">✏️ إدارة العقود</div>
+  <div class="tab" onclick="nav('tenants',this)">👤 المستأجرون</div>
+  <div class="tab" onclick="nav('buildings',this)">🏢 المباني</div>
+  <div class="tab" onclick="nav('finance',this)">💰 المالية</div>
+  <div class="tab" onclick="nav('sms',this)">📱 الرسائل</div>
+  <div class="tab" onclick="nav('ai',this)">🤖 المساعد الذكي</div>
+  <div class="tab" onclick="nav('alerts',this)">🔔 الاستحقاقات</div>
+  <div class="tab admin-only" onclick="nav('users',this)" style="display:none">👥 المستخدمون</div>
+  <div class="tab admin-only" onclick="nav('activity',this)" style="display:none">📋 سجل العمليات</div>
+  <div class="tab admin-only" onclick="nav('backup',this)" style="display:none">💾 النسخ الاحتياطي</div>
+  <div class="tab" onclick="nav('log',this)">📜 السجل</div>
+</div>
+
+<div class="content">
+
+<!-- ═══ لوحة التحكم ═══ -->
+<div id="page-dashboard" class="page active">
+  <div class="metrics" id="dashMetrics">
+    <div class="metric m-blue"><div class="metric-label">العقود السارية</div><div class="metric-value" id="m-active">—</div></div>
+    <div class="metric m-amber"><div class="metric-label">تشارف انتهاء</div><div class="metric-value" id="m-exp">—</div></div>
+    <div class="metric m-red"><div class="metric-label">منتهية</div><div class="metric-value" id="m-ended">—</div></div>
+    <div class="metric m-green"><div class="metric-label">الإيجار الشهري</div><div class="metric-value" id="m-rent">—</div><div class="metric-sub" id="m-rent-sub">—</div></div>
+    <div class="metric m-green"><div class="metric-label">تم تحصيله</div><div class="metric-value" id="m-paid">—</div></div>
+    <div class="metric m-amber"><div class="metric-label">المتبقي</div><div class="metric-value" id="m-rem">—</div></div>
+    <div class="metric m-red"><div class="metric-label">لم يسددوا</div><div class="metric-value" id="m-nopay">—</div></div>
+    <div class="metric m-blue"><div class="metric-label">نسبة التحصيل</div><div class="metric-value" id="m-rate">—</div></div>
+  </div>
+  <div class="two-col">
+    <div class="card">
+      <div class="card-title">🏢 إشغال المباني</div>
+      <div id="bldgCards"></div>
+    </div>
+    <div class="card">
+      <div class="card-title" style="color:#92400E">⚠️ تنبيهات عاجلة</div>
+      <div id="urgentList"></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title" style="color:#9B1C1C">💸 لم يسددوا بعد</div>
+    <div id="noPayList"></div>
+  </div>
+
+  <!-- تنبيهات الاستحقاقات على الداشبورد -->
+  <div class="card" id="dashAlertsCard" data-perm="alerts.view">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div class="card-title" style="margin:0;color:#92400E">🔔 استحقاقات خلال 14 يوم</div>
+      <button class="btn btn-sm" onclick="navTo('alerts')">عرض الكل ←</button>
+    </div>
+    <div id="dashAlertsList"></div>
+  </div>
+</div>
+
+<!-- ═══ خريطة المباني ═══ -->
+<div id="page-map" class="page">
+  <div class="card" style="margin-bottom:12px">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <select class="form-control" id="mapBuildingSelect" onchange="loadBuildingMap()" style="max-width:220px">
+        <option value="">اختر المبنى...</option>
+      </select>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12px;align-items:center">
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:12px;background:#C6F6D5;border-radius:3px;display:inline-block"></span> مشغولة</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:12px;background:#FEF3C7;border-radius:3px;display:inline-block"></span> تشارف انتهاء</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:12px;background:#EDF2F7;border-radius:3px;display:inline-block"></span> فارغة</span>
+      </div>
+    </div>
+  </div>
+  <div id="mapStats" style="display:none" class="metrics" style="margin-bottom:12px"></div>
+  <div class="card">
+    <div class="card-title" id="mapTitle">اختر مبنى لعرض الخريطة</div>
+    <div id="bMapGrid" class="bmap-grid"></div>
+  </div>
+  <!-- تفاصيل الوحدة -->
+  <div id="unitDetail" class="card" style="display:none">
+    <div class="card-title" id="unitDetailTitle"></div>
+    <div id="unitDetailBody"></div>
+  </div>
+</div>
+
+<!-- ═══ العقود ═══ -->
+<div id="page-contracts" class="page">
+  <div class="card" style="padding:12px">
+    <div class="search-row">
+      <input class="form-control" type="text" id="searchInput" placeholder="ابحث باسم أو شقة أو مبنى..." oninput="renderContracts()" style="flex:1;min-width:180px">
+      <select class="form-control" id="fBldg" onchange="renderContracts()" style="max-width:150px"><option value="">كل المباني</option></select>
+      <select class="form-control" id="fStatus" onchange="renderContracts()" style="max-width:150px">
+        <option value="">كل الحالات</option><option>ساري</option><option>شارف على الانتهاء</option><option>منتهي</option>
+      </select>
+      <select class="form-control" id="fType" onchange="renderContracts()" style="max-width:120px">
+        <option value="">كل الأنواع</option><option>سكني</option><option>تجاري</option>
+      </select>
+    </div>
+    <div class="tbl-wrap">
+      <table><thead><tr>
+        <th>المستأجر</th><th>المبنى</th><th>شقة</th><th>النوع</th>
+        <th>نهاية العقد</th><th>أيام</th><th>الإيجار</th><th>المسدد</th><th>%</th><th>الحالة</th><th>إجراء</th>
+      </tr></thead>
+      <tbody id="contractsBody"></tbody></table>
+    </div>
+    <div id="contractsCount" style="margin-top:8px;font-size:12px;color:#718096"></div>
+  </div>
+</div>
+
+<!-- ═══ إدارة العقود ═══ -->
+<div id="page-manage" class="page">
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+    <button data-perm="contracts.add" class="btn btn-success" onclick="openContractModal('add')">+ إضافة عقد جديد</button>
+    <button class="btn" onclick="loadData()">🔄 تحديث البيانات</button>
+  </div>
+  <div class="card" style="padding:12px">
+    <div class="search-row">
+      <input class="form-control" type="text" id="mSearch" placeholder="ابحث..." oninput="renderManage()" style="flex:1">
+      <select class="form-control" id="mBldg" onchange="renderManage()" style="max-width:150px"><option value="">كل المباني</option></select>
+      <select class="form-control" id="mType" onchange="renderManage()" style="max-width:120px">
+        <option value="">كل الأنواع</option><option>سكني</option><option>تجاري</option>
+      </select>
+    </div>
+    <div class="tbl-wrap">
+      <table><thead><tr>
+        <th>المستأجر</th><th>الجوال</th><th>المبنى</th><th>شقة</th><th>النوع</th>
+        <th>الإيجار</th><th>المسدد</th><th>الحالة</th><th>الإجراءات</th>
+      </tr></thead>
+      <tbody id="manageBody"></tbody></table>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ المستأجرون ═══ -->
+<div id="page-tenants" class="page">
+  <div class="card" style="padding:12px">
+    <div class="search-row">
+      <input class="form-control" id="tSearch" placeholder="ابحث باسم أو هوية أو جوال..." oninput="renderTenants()" style="flex:1">
+      <select class="form-control" id="tStatus" onchange="renderTenants()" style="max-width:150px">
+        <option value="">كل الحالات</option><option>ساري</option><option>منتهي</option>
+      </select>
+    </div>
+    <div class="tbl-wrap">
+      <table><thead><tr>
+        <th>المستأجر</th><th>رقم الهوية</th><th>الجوال</th><th>عدد العقود</th><th>آخر مبنى</th><th>آخر وحدة</th>
+        <th>إجمالي المدفوع</th><th>الانتظام</th><th>الحالة</th><th>تفاصيل</th>
+      </tr></thead>
+      <tbody id="tenantsBody"></tbody></table>
+    </div>
+  </div>
+  <!-- تاريخ المستأجر -->
+  <div id="tenantHistoryCard" class="card" style="display:none">
+    <div class="card-title" id="tenantHistoryTitle"></div>
+    <div id="tenantHistoryBody"></div>
+  </div>
+</div>
+
+<!-- ═══ المباني ═══ -->
+<div id="page-buildings" class="page">
+  <div style="display:flex;gap:8px;margin-bottom:12px">
+    <button data-perm="buildings.add" class="btn btn-success" onclick="openBuildingModal('add')">+ إضافة مبنى جديد</button>
+  </div>
+  <div class="card" style="padding:0">
+    <div class="tbl-wrap">
+      <table><thead><tr>
+        <th>اسم المبنى</th><th>النوع</th><th>عدد الوحدات</th><th>الأدوار</th>
+        <th>مشغول</th><th>فارغ</th><th>نسبة الإشغال</th><th>ملاحظات</th><th>إجراء</th>
+      </tr></thead>
+      <tbody id="buildingsBody"></tbody></table>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ الرسائل ═══ -->
+<div id="page-sms" class="page">
+  <div class="two-col">
+    <div class="card">
+      <div class="card-title">📤 إرسال رسائل SMS</div>
+      <div class="form-group">
+        <div class="form-label">القوالب</div>
+        <div class="tpl-list">
+          <span class="tpl" onclick="setTpl('renewal')">تجديد عقد</span>
+          <span class="tpl" onclick="setTpl('payment')">تذكير دفع</span>
+          <span class="tpl" onclick="setTpl('welcome')">ترحيب</span>
+          <span class="tpl" onclick="setTpl('expire')">إنهاء عقد</span>
+          <span class="tpl" onclick="setTpl('maintenance')">صيانة</span>
+        </div>
+        <details id="smsTplEditor" style="margin-top:8px;background:var(--gray-l);border:1px solid var(--border);border-radius:8px;padding:10px">
+          <summary style="cursor:pointer;font-size:12px;color:var(--navy);font-weight:600">⚙️ تخصيص نصوص القوالب وحفظها</summary>
+          <div class="form-group" style="margin-top:10px"><div class="form-label">تجديد عقد</div><textarea class="form-control" id="tpl-renewal"></textarea></div>
+          <div class="form-group"><div class="form-label">تذكير دفع</div><textarea class="form-control" id="tpl-payment"></textarea></div>
+          <div class="form-group"><div class="form-label">ترحيب</div><textarea class="form-control" id="tpl-welcome"></textarea></div>
+          <div class="form-group"><div class="form-label">إنهاء عقد</div><textarea class="form-control" id="tpl-expire"></textarea></div>
+          <div class="form-group"><div class="form-label">صيانة</div><textarea class="form-control" id="tpl-maintenance"></textarea></div>
+          <button data-perm="sms.send" class="btn btn-primary btn-sm" onclick="saveSmsTemplatesUI()">💾 حفظ القوالب</button>
+          <div id="smsTplResult"></div>
+        </details>
+        <details id="autoSmsBox" style="margin-top:8px;background:var(--blue-l);border:1px solid var(--border);border-radius:8px;padding:10px">
+          <summary style="cursor:pointer;font-size:12px;color:var(--navy);font-weight:600">🤖 الإرسال التلقائي للرسائل</summary>
+          <div style="font-size:12px;color:#718096;line-height:1.7;margin:8px 0">يرسل النظام تذكيرات تلقائياً مرة يومياً حسب الإعدادات، مع منع تكرار الإرسال لنفس المستأجر في نفس اليوم.</div>
+          <label style="display:flex;gap:6px;align-items:center;margin-bottom:8px"><input type="checkbox" id="autoSmsEnabled"> تفعيل الإرسال التلقائي</label>
+          <label style="display:flex;gap:6px;align-items:center;margin-bottom:8px"><input type="checkbox" id="autoSmsRenewal"> تذكيرات تجديد العقود</label>
+          <div class="form-group"><div class="form-label">إرسال تذكير التجديد قبل نهاية العقد بـ</div><input class="form-control" id="autoSmsRenewalDays" type="number" min="1" max="120" value="30"></div>
+          <label style="display:flex;gap:6px;align-items:center;margin-bottom:8px"><input type="checkbox" id="autoSmsPayment"> تذكيرات سداد المستحقات عند تاريخ الاستحقاق</label>
+          <div class="form-group"><div class="form-label">ساعة الإرسال اليومية</div><input class="form-control" id="autoSmsHour" type="number" min="6" max="22" value="9"></div>
+          <button data-perm="sms.send" class="btn btn-primary btn-sm" onclick="saveAutoSmsSettingsUI()">💾 حفظ إعدادات الإرسال التلقائي</button>
+          <div id="autoSmsResult"></div>
+        </details>
+      </div>
+      <div class="form-group">
+        <div class="form-label">المستلمون</div>
+        <select class="form-control" id="smsTarget" onchange="document.getElementById('smsBldgRow').style.display=this.value==='building'?'block':'none'">
+          <option value="expiring_60">تنتهي عقودهم خلال 60 يوم</option>
+          <option value="expiring_30">تنتهي عقودهم خلال 30 يوم</option>
+          <option value="nopay">لم يسددوا بعد</option>
+          <option value="building">مبنى محدد ←</option>
+        </select>
+      </div>
+      <div id="smsBldgRow" style="display:none" class="form-group">
+        <div class="form-label">اختر المبنى</div>
+        <select class="form-control" id="smsBldg"></select>
+      </div>
+      <div class="form-group">
+        <div class="form-label">نص الرسالة</div>
+        <textarea class="form-control" id="smsText" placeholder="اكتب أو اختر قالباً أو اضغط صياغة تلقائية..."></textarea>
+        <div id="smsChars" style="font-size:11px;color:#718096;text-align:left;margin-top:2px">0 حرف</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button data-perm="sms.send" class="btn btn-primary" onclick="craftSmsAI()">🤖 صياغة تلقائية</button>
+        <button data-perm="sms.send" class="btn btn-success" onclick="sendSmsAction()">📤 إرسال</button>
+      </div>
+      <div id="smsResult"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">⚡ إرسال سريع</div>
+      <p style="font-size:13px;color:#718096;margin-bottom:12px">بضغطة واحدة مع صياغة تلقائية</p>
+      <button data-perm="sms.send" class="btn btn-amber" onclick="quickSend('exp30')" style="width:100%;margin-bottom:7px">⚠️ تذكيرات التجديد (30 يوم)</button>
+      <button data-perm="sms.send" class="btn btn-amber" onclick="quickSend('exp60')" style="width:100%;margin-bottom:7px">⚠️ تذكيرات التجديد (60 يوم)</button>
+      <button data-perm="sms.send" class="btn btn-danger" onclick="quickSend('nopay')" style="width:100%;margin-bottom:14px">💰 تذكيرات الدفع</button>
+      <div style="border-top:1px solid var(--border);padding-top:12px">
+        <div class="card-title" style="font-size:13px;margin-bottom:8px">📱 رسالة لمستأجر واحد</div>
+        <div class="form-group"><input class="form-control" id="singlePhone" placeholder="05xxxxxxxx"></div>
+        <div class="form-group"><textarea class="form-control" id="singleMsg" style="min-height:55px" placeholder="نص الرسالة..."></textarea></div>
+        <button data-perm="sms.send" class="btn btn-primary" onclick="sendSingle()">إرسال</button>
+        <div id="singleResult"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ المساعد الذكي ═══ -->
+<div id="page-ai" class="page">
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+      <div class="card-title" style="margin:0">🤖 المساعد الذكي</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span style="font-size:12px;color:#718096">النموذج:</span>
+        <select class="form-control" id="aiModelSelect" onchange="changeAIModel()" style="max-width:200px;padding:5px 8px;font-size:12px">
+          <option value="">افتراضي (تلقائي)</option>
+          <optgroup label="Anthropic Claude">
+            <option value="claude-sonnet-4-20250514">Claude Sonnet 4 (الأقوى)</option>
+            <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
+            <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku (أسرع)</option>
+          </optgroup>
+          <optgroup label="OpenAI GPT">
+            <option value="gpt-4o">GPT-4o</option>
+            <option value="gpt-4o-mini">GPT-4o-mini (افتراضي)</option>
+            <option value="gpt-4-turbo">GPT-4 Turbo</option>
+          </optgroup>
+        </select>
+        <span id="aiKeyHint" style="font-size:11px;color:#718096"></span>
+      </div>
+    </div>
+    <div class="chips">
+      <span class="chip" onclick="askAI('قدّم لي تقريراً تنفيذياً شاملاً عن أداء الجمعية: نقاط القوة، نقاط الضعف، الفرص، التهديدات، وأهم 3 توصيات عاجلة')">📋 تقرير تنفيذي شامل</span>
+      <span class="chip" onclick="askAI('حلل أداء كل مبنى مالياً: الإشغال، التحصيل، العائد. قارنها وحدد المباني الأكثر ربحية والأقل أداءً مع توصيات')">🏢 تحليل أداء المباني</span>
+      <span class="chip" onclick="askAI('اعرض لي قائمة بأخطر 5 مستأجرين متأخرين في السداد بالأرقام، مع اقتراح خطوات تنفيذية لكل واحد منهم')">⚠️ تحليل المتأخرين</span>
+      <span class="chip" onclick="askAI('بناءً على بيانات السنة الحالية، توقّع الإيرادات المتبقية حتى نهاية العام وحدد الفجوة بين المتوقع والمحقق')">💰 توقعات مالية مفصلة</span>
+      <span class="chip" onclick="askAI('ما هي العقود التي تشارف على الانتهاء خلال 60 يوم؟ ضع خطة تجديد بأولويات وأرقام تواصل')">🔄 خطة تجديد العقود</span>
+      <span class="chip" onclick="askAI('احسب لي معدل دوران المستأجرين، متوسط مدة الإقامة، ونسبة المستأجرين الملتزمين مقابل المتأخرين')">📊 مؤشرات أداء</span>
+      <span class="chip" onclick="askAI('اقترح استراتيجية شاملة لرفع نسبة الإشغال ورفع نسبة التحصيل بشكل عملي ومحدد لكل مبنى')">🎯 استراتيجية تحسين</span>
+      <span class="chip" onclick="askAI('ما الوحدات الشاغرة الآن في كل مبنى مع الإيجار المتوقع لها؟ كم سترتفع الإيرادات لو ملأناها؟')">🏚️ الوحدات الشاغرة</span>
+    </div>
+    <div class="ai-msgs" id="aiMsgs">
+      <div class="msg msg-ai">مرحباً! أنا مستشارك الخبير في إدارة الأملاك العقارية والتحليل المالي. لديّ وصول كامل لبيانات العقود والمباني والمستأجرين والاستحقاقات.<br><br>يمكنني مساعدتك في:<br>• تحليل الأداء المالي وإيجاد فرص التحسين<br>• تقييم المخاطر وتحديد المستأجرين المتأخرين<br>• وضع استراتيجيات للتحصيل ورفع الإشغال<br>• كتابة الرسائل الرسمية والتقارير<br>• الإجابة على أي سؤال محدد عن العقارات<br><br>كيف يمكنني مساعدتك اليوم؟</div>
+    </div>
+    <div class="ai-row">
+      <input class="form-control" id="aiInput" placeholder="اكتب سؤالك..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();askAI()}">
+      <button class="btn btn-primary" onclick="askAI()">إرسال</button>
+    </div>
+  </div>
+</div>
+
+
+
+<!-- ═══ المالية ═══ -->
+<div id="page-finance" class="page">
+  <!-- بطاقة العام الحالي البارزة -->
+  <div class="card" style="background:linear-gradient(135deg, #1A3A5C 0%, #2B6CB0 100%);color:#fff;margin-bottom:14px;border:none">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px">
+      <div>
+        <div style="font-size:12px;opacity:.85;margin-bottom:4px">📅 ملخص العام الحالي</div>
+        <div style="font-size:22px;font-weight:600" id="cy-year">—</div>
+      </div>
+      <div style="display:flex;gap:24px;flex-wrap:wrap;flex:1;justify-content:flex-end">
+        <div style="text-align:center">
+          <div style="font-size:11px;opacity:.85;margin-bottom:2px">المحصّل حتى الآن</div>
+          <div style="font-size:18px;font-weight:600;color:#9AE6B4" id="cy-collected">—</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:11px;opacity:.85;margin-bottom:2px">المتوقع للسنة كاملة</div>
+          <div style="font-size:18px;font-weight:600" id="cy-expected">—</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:11px;opacity:.85;margin-bottom:2px">المتبقي تحصيله</div>
+          <div style="font-size:18px;font-weight:600;color:#FBD38D" id="cy-remaining">—</div>
+        </div>
+        <div style="text-align:center;min-width:100px">
+          <div style="font-size:11px;opacity:.85;margin-bottom:4px">نسبة التقدم</div>
+          <div style="position:relative;background:rgba(255,255,255,.2);border-radius:20px;height:8px;width:100px;overflow:hidden">
+            <div id="cy-progress-bar" style="background:#9AE6B4;height:100%;width:0%;transition:width .5s"></div>
+          </div>
+          <div style="font-size:13px;font-weight:600;margin-top:4px" id="cy-progress">—</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="metrics" id="finMetrics">
+    <div class="metric m-blue"><div class="metric-label">الإيجار الشهري</div><div class="metric-value" id="fin-monthly">—</div></div>
+    <div class="metric m-blue"><div class="metric-label">الإيجار السنوي</div><div class="metric-value" id="fin-annual">—</div></div>
+    <div class="metric m-green"><div class="metric-label">إجمالي المحصّل</div><div class="metric-value" id="fin-paid">—</div></div>
+    <div class="metric m-amber"><div class="metric-label">المتبقي</div><div class="metric-value" id="fin-rem">—</div></div>
+    <div class="metric m-blue"><div class="metric-label">نسبة التحصيل</div><div class="metric-value" id="fin-rate">—</div></div>
+    <div class="metric m-green"><div class="metric-label">متوسط قيمة العقد</div><div class="metric-value" id="fin-avg">—</div></div>
+  </div>
+
+  <div class="two-col">
+    <div class="card">
+      <div class="card-title">📅 الأداء الشهري (السنة الحالية)</div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>الشهر</th><th>المتوقع</th><th>المحصّل</th><th>%</th></tr></thead>
+          <tbody id="fin-monthly-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">📊 المقارنة السنوية</div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>السنة</th><th>عقود</th><th>الإيجار</th><th>المحصّل</th><th>%</th></tr></thead>
+          <tbody id="fin-yearly-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🏢 الأداء المالي حسب المبنى</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>المبنى</th><th>عقود</th><th>الإيجار</th><th>المحصّل</th><th>المتبقي</th><th>%</th></tr></thead>
+        <tbody id="fin-bldg-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+
+
+  <div class="card">
+    <div class="card-title">⏳ أعمار المتأخرات</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>الفترة</th><th>عدد الحالات</th><th>إجمالي المتأخر</th><th>أمثلة</th></tr></thead>
+        <tbody id="fin-aging-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🏆 أعلى 10 مستأجرين دفعاً</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>#</th><th>المستأجر</th><th>عقود</th><th>إجمالي الإيجار</th><th>إجمالي المدفوع</th></tr></thead>
+        <tbody id="fin-top-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ تنبيهات الاستحقاقات ═══ -->
+<div id="page-alerts" class="page">
+  <div class="card" style="margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+      <div class="card-title" style="margin:0">🔔 تنبيهات الاستحقاقات القادمة</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span style="font-size:12px;color:#718096">عرض الاستحقاقات خلال:</span>
+        <select class="form-control" id="alertsRange" onchange="loadAlerts()" style="max-width:130px">
+          <option value="7">7 أيام</option>
+          <option value="14" selected>14 يوم</option>
+          <option value="30">30 يوم</option>
+          <option value="60">60 يوم</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="metrics" id="alertsMetrics" style="display:none">
+    <div class="metric m-red"><div class="metric-label">متأخرة</div><div class="metric-value" id="aOverdue">—</div></div>
+    <div class="metric m-amber"><div class="metric-label">عاجل (≤ 3 أيام)</div><div class="metric-value" id="aCritical">—</div></div>
+    <div class="metric m-blue"><div class="metric-label">قريبة (≤ 7 أيام)</div><div class="metric-value" id="aSoon">—</div></div>
+    <div class="metric m-green"><div class="metric-label">قادمة</div><div class="metric-value" id="aUpcoming">—</div></div>
+  </div>
+
+  <div class="card">
+    <div id="alertsList">
+      <div style="text-align:center;padding:30px;color:#718096">جارٍ التحميل...</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══ إدارة المستخدمين ═══ -->
+<div id="page-users" class="page">
+  <div class="card" style="margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+      <div class="card-title" style="margin:0">👥 إدارة المستخدمين والصلاحيات</div>
+      <button class="btn btn-success" onclick="openUserModal('add')">+ إضافة مستخدم</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr>
+          <th>اسم المستخدم</th><th>الاسم الكامل</th><th>الدور</th>
+          <th>البريد</th><th>الحالة</th><th>آخر دخول</th><th>إجراء</th>
+        </tr></thead>
+        <tbody id="usersBody"><tr><td colspan="7" style="text-align:center;padding:20px;color:#718096">جارٍ التحميل...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ سجل العمليات ═══ -->
+<div id="page-activity" class="page">
+  <div class="card" style="margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+      <div class="card-title" style="margin:0">📋 سجل العمليات</div>
+      <button class="btn btn-sm" onclick="loadActivity()">🔄 تحديث</button>
+    </div>
+    <div style="font-size:12px;color:#718096;margin-top:6px">يعرض آخر 200 عملية — يمكنك تصفية النوع</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px" id="activityFilters">
+      <span style="font-size:12px;color:#718096;line-height:28px">تصفية:</span>
+      <label class="act-filter"><input type="checkbox" value="إضافة"  checked onchange="filterActivity()"> إضافة</label>
+      <label class="act-filter"><input type="checkbox" value="تعديل"  checked onchange="filterActivity()"> تعديل</label>
+      <label class="act-filter"><input type="checkbox" value="حذف"    checked onchange="filterActivity()"> حذف</label>
+      <label class="act-filter"><input type="checkbox" value="دفعة"   checked onchange="filterActivity()"> دفعة</label>
+      <label class="act-filter"><input type="checkbox" value="رسالة"  checked onchange="filterActivity()"> رسالة SMS</label>
+      <label class="act-filter"><input type="checkbox" value="نسخ احتياطي" checked onchange="filterActivity()"> نسخ احتياطي</label>
+    </div>
+  </div>
+  <div class="card">
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr>
+          <th>الوقت</th><th>المستخدم</th><th>الإجراء</th><th>النوع</th><th>التفاصيل</th>
+        </tr></thead>
+        <tbody id="activityBody"><tr><td colspan="5" style="text-align:center;padding:20px;color:#718096">جارٍ التحميل...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="adminTrashCard" class="card admin-only" data-perm="users.manage" style="margin-top:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+      <div class="card-title" style="margin:0">🗑️ أدوات المدير: سلة العقود المحذوفة</div>
+      <button class="btn btn-amber" id="deletedContractsBtn" onclick="loadDeletedContracts()">عرض السلة</button>
+    </div>
+    <div style="font-size:12px;color:#718096;margin-bottom:8px">الحذف من إدارة العقود ينقل العقد هنا فقط، ولا يستطيع استرجاعه إلا المدير.</div>
+    <div id="deletedContractsCard" style="display:none"><div id="deletedContractsBody"></div></div>
+    <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px">
+      <div class="card-title" style="font-size:13px;margin-bottom:8px">🏢 أرشفة مبنى</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select class="form-control" id="adminArchiveBuildingSelect" style="max-width:260px"><option value="">اختر مبنى...</option></select>
+        <button class="btn btn-amber" onclick="archiveSelectedBuildingAdmin()">أرشفة المبنى المحدد</button>
+      </div>
+      <div style="font-size:11px;color:#718096;margin-top:6px">الأرشفة تخفي المبنى من القوائم النشطة دون حذف العقود المرتبطة به.</div>
+    </div>
+    <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+        <div class="card-title" style="font-size:13px;margin:0">♻️ المباني المؤرشفة</div>
+        <button class="btn btn-sm" onclick="loadArchivedBuildingsAdmin()">عرض المؤرشفة</button>
+      </div>
+      <div id="archivedBuildingsBody" style="display:none"></div>
+    </div>
+    <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+        <div class="card-title" style="font-size:13px;margin:0">💰 سجل الدفعات</div>
+        <button class="btn btn-sm" onclick="loadPaymentLogAdmin()">عرض آخر الدفعات</button>
+      </div>
+      <div id="paymentLogAdminBody" style="display:none"></div>
+    </div>
+  </div>
+</div>
+<!-- ═══ النسخ الاحتياطي ═══ -->
+<div id="page-backup" class="page">
+  <div class="card">
+    <div class="card-title">💾 النسخ الاحتياطي</div>
+    <div style="font-size:13px;color:#718096;line-height:1.7;margin-bottom:14px">
+      يقوم النظام بحفظ نسخة احتياطية كاملة من قاعدة البيانات في Google Drive.<br>
+      يمكنك تفعيل النسخ التلقائي اليومي أو إنشاء نسخة فورية.
+    </div>
+
+    <div class="metrics" style="margin-bottom:16px">
+      <div class="metric m-blue"><div class="metric-label">الحالة</div><div class="metric-value" id="bk-status" style="font-size:16px">—</div></div>
+      <div class="metric m-green"><div class="metric-label">عدد النسخ</div><div class="metric-value" id="bk-count">—</div></div>
+      <div class="metric m-blue"><div class="metric-label">آخر نسخة</div><div class="metric-value" id="bk-last" style="font-size:14px">—</div></div>
+    </div>
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+      <button class="btn btn-success" onclick="doBackupNow()" id="bk-now-btn">📥 نسخة احتياطية الآن</button>
+      <button class="btn btn-primary" onclick="toggleAutoBackup()" id="bk-toggle-btn">⏰ تفعيل النسخ التلقائي اليومي</button>
+      <button class="btn btn-amber" onclick="loadBackupFilesUI()">♻️ استعادة نسخة احتياطية</button>
+      <a class="btn" id="bk-folder-link" target="_blank" style="display:none">📂 فتح النسخة في Drive</a>
+    </div>
+    <div id="restoreBackupBox" style="display:none;background:var(--amber-l);border:1px solid var(--peach);border-radius:8px;padding:12px;margin-bottom:12px">
+      <div class="card-title" style="font-size:13px;color:var(--amber);margin-bottom:8px">♻️ استعادة نسخة احتياطية كاملة</div>
+      <div style="font-size:12px;color:#718096;line-height:1.7;margin-bottom:8px">تنبيه: الاستعادة تستبدل كل شيتات النظام الحالية بمحتوى النسخة المختارة. سيتم إنشاء نسخة احتياطية تلقائية قبل الاستعادة.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select class="form-control" id="backupRestoreSelect" style="min-width:260px;flex:1"><option value="">جارٍ تحميل النسخ...</option></select>
+        <button class="btn btn-danger" onclick="restoreSelectedBackupUI()">استعادة النسخة المختارة</button>
+      </div>
+    </div>
+    <div id="bkResult"></div>
+
+    <div style="margin-top:18px;padding:12px;background:var(--blue-l);border-radius:8px;font-size:12px;color:var(--navy);line-height:1.7">
+      <strong>📌 ملاحظات:</strong><br>
+      • كل نسخة تُحفظ في <strong>My Drive</strong> باسم يبدأ بـ 📦 مع التاريخ والوقت.<br>
+      • النسخ التلقائي يعمل يومياً الساعة 11 مساءً (توقيت الرياض).<br>
+      • يمكنك الوصول للنسخ من <a href="https://drive.google.com" target="_blank" style="color:var(--blue)">Google Drive</a> والبحث عن 📦.
+    </div>
+  </div>
+</div>
+
+<!-- ═══ السجل ═══ -->
+<div id="page-log" class="page">
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div class="card-title" style="margin:0">📜 سجل الرسائل المرسلة</div>
+      <button class="btn btn-sm" onclick="loadLog()">🔄 تحديث</button>
+    </div>
+    <div class="tbl-wrap">
+      <table><thead><tr>
+        <th>التاريخ</th><th>المستأجر</th><th>الجوال</th><th>المبنى</th><th>الرسالة</th><th>الحالة</th>
+      </tr></thead>
+      <tbody id="logBody"></tbody></table>
+    </div>
+  </div>
+</div>
+
+</div><!-- /content -->
+
+<!-- Modal عقد -->
+<div id="contractModal" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-hdr"><span id="cModalTitle">إضافة عقد</span><button class="modal-close" onclick="closeModal('contractModal')">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="cEditRow">
+      <div class="form-grid">
+        <div class="form-group"><div class="form-label">اسم المستأجر *</div><input class="form-control" id="c-tenant"></div>
+        <div class="form-group"><div class="form-label">رقم الهوية</div><input class="form-control" id="c-idNo" placeholder="1xxxxxxxxx"></div>
+        <div class="form-group"><div class="form-label">رقم الجوال</div><input class="form-control" id="c-phone" placeholder="05xxxxxxxx"></div>
+        <div class="form-group"><div class="form-label">المبنى *</div><select class="form-control" id="c-building"><option value="">اختر...</option></select></div>
+        <div class="form-group"><div class="form-label">رقم الوحدة *</div><input class="form-control" id="c-unit" placeholder="مثال: 5 أو محل 3"></div>
+        <div class="form-group"><div class="form-label">النوع</div>
+          <select class="form-control" id="c-type"><option value="سكني">سكني</option><option value="تجاري">تجاري</option></select></div>
+        <div class="form-group"><div class="form-label">الحالة</div>
+          <select class="form-control" id="c-status"><option>ساري</option><option>شارف على الانتهاء</option><option>منتهي</option></select></div>
+        <div class="form-group"><div class="form-label">بداية العقد</div><input class="form-control" id="c-start" type="date"></div>
+        <div class="form-group"><div class="form-label">نهاية العقد</div><input class="form-control" id="c-end" type="date"></div>
+        <div class="form-group"><div class="form-label">إجمالي الإيجار (ر.س)</div><input class="form-control" id="c-rent" type="number" min="0"></div>
+        <div class="form-group"><div class="form-label">ما تم سداده (ر.س)</div><input class="form-control" id="c-paid" type="number" min="0"></div>
+        <div class="form-group"><div class="form-label">جدولة السداد</div>
+          <select class="form-control" id="c-schedule" onchange="updateNextDue()"><option value="">—</option><option>شهري</option><option>3 أشهر</option><option>6 أشهر</option><option>سنوي</option></select></div>
+        <div class="form-group">
+          <div class="form-label">تاريخ الاستحقاق القادم</div>
+          <div class="form-control" id="c-nextDue" style="background:var(--blue-l);color:var(--navy);font-weight:500;min-height:36px;display:flex;align-items:center">—</div>
+        </div>
+        <div class="form-group"><div class="form-label">انتظام السداد</div>
+          <select class="form-control" id="c-regularity"><option value="">—</option><option>ملتزم</option><option>غير منتظم</option><option>متأخر</option></select></div>
+      </div>
+      <div class="form-group"><div class="form-label">ملاحظات</div><textarea class="form-control" id="c-notes"></textarea></div>
+      <div id="cModalResult"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('contractModal')">إلغاء</button>
+      <button class="btn btn-success" id="cSaveBtn" onclick="saveContract()">حفظ</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal دفعة -->
+<div id="paymentModal" class="modal-overlay">
+  <div class="modal-box" style="max-width:720px">
+    <div class="modal-hdr" style="background:#276749"><span>💰 تسجيل دفعة وسجل الدفعات</span><button class="modal-close" onclick="closeModal('paymentModal')">✕</button></div>
+    <div class="modal-body">
+      <div id="payInfo" style="font-size:13px;color:#718096;margin-bottom:12px;line-height:1.7"></div>
+      <div class="form-group"><div class="form-label">مبلغ الدفعة (ر.س)</div><input class="form-control" id="payAmount" type="number" min="1"></div>
+      <input type="hidden" id="payRow">
+      <div id="payResult"></div>
+      <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px">
+        <div class="card-title" style="font-size:13px;margin-bottom:8px">📜 سجل دفعات هذا العقد</div>
+        <div id="payHistory" style="font-size:12px;color:#718096">جارٍ التحميل...</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('paymentModal')">إلغاء</button>
+      <button class="btn btn-success" onclick="savePayment()">تسجيل</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- Modal SMS مخصص -->
+<div id="smsModal" class="modal-overlay">
+  <div class="modal-box" style="max-width:480px">
+    <div class="modal-hdr" style="background:#92400E"><span>📱 إرسال رسالة مخصصة</span><button class="modal-close" onclick="closeModal('smsModal')">✕</button></div>
+    <div class="modal-body">
+      <div id="smsRecipient" style="font-size:13px;color:#718096;margin-bottom:12px;padding:8px 12px;background:var(--gray-l);border-radius:6px"></div>
+      <input type="hidden" id="smsPhone">
+      <input type="hidden" id="smsName">
+      <div class="form-group">
+        <div class="form-label">الإجراء السريع</div>
+        <div class="tpl-list">
+          <span class="tpl" onclick="setSmsTpl('payment')">تذكير دفع</span>
+          <span class="tpl" onclick="setSmsTpl('renewal')">تذكير تجديد</span>
+          <span class="tpl" onclick="setSmsTpl('thanks')">شكر</span>
+          <span class="tpl" onclick="setSmsTpl('ai')">🤖 صياغة ذكية</span>
+        </div>
+      </div>
+      <div class="form-group">
+        <div class="form-label">نص الرسالة</div>
+        <textarea class="form-control" id="smsCustomText" style="min-height:90px" placeholder="اكتب نص الرسالة..."></textarea>
+        <div id="smsCustomCount" style="font-size:11px;color:#718096;text-align:left;margin-top:2px">0 حرف</div>
+      </div>
+      <div id="smsCustomResult"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('smsModal')">إلغاء</button>
+      <button class="btn btn-success" id="smsSendBtn" onclick="sendCustomSms()">إرسال</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal مبنى -->
+<div id="buildingModal" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-hdr"><span id="bModalTitle">إضافة مبنى</span><button class="modal-close" onclick="closeModal('buildingModal')">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="bEditRow">
+      <div class="form-grid">
+        <div class="form-group"><div class="form-label">اسم المبنى *</div><input class="form-control" id="b-name"></div>
+        <div class="form-group"><div class="form-label">النوع</div>
+          <select class="form-control" id="b-type"><option>سكني</option><option>تجاري</option><option>مختلط</option></select></div>
+        <div class="form-group"><div class="form-label">عدد الوحدات</div><input class="form-control" id="b-units" type="number" min="1"></div>
+        <div class="form-group"><div class="form-label">عدد الأدوار</div><input class="form-control" id="b-floors" type="number" min="1"></div>
+      </div>
+      <div class="form-group"><div class="form-label">ملاحظات</div><textarea class="form-control" id="b-notes"></textarea></div>
+      <div id="bModalResult"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('buildingModal')">إلغاء</button>
+      <button class="btn btn-success" id="bSaveBtn" onclick="saveBuilding()">حفظ</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="config.js"></script>
+<script src="api.js"></script>
+<script src="app.js"></script>
+
+
+<!-- Modal تغيير كلمة المرور -->
+<div id="pwdModal" class="modal-overlay">
+  <div class="modal-box" style="max-width:420px">
+    <div class="modal-hdr">
+      <span>🔑 تغيير كلمة المرور</span>
+      <button class="modal-close" onclick="closeModal('pwdModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <div class="form-label">كلمة المرور الحالية</div>
+        <input class="form-control" type="password" id="pwd-old">
+      </div>
+      <div class="form-group">
+        <div class="form-label">كلمة المرور الجديدة</div>
+        <input class="form-control" type="password" id="pwd-new">
+      </div>
+      <div class="form-group">
+        <div class="form-label">تأكيد كلمة المرور الجديدة</div>
+        <input class="form-control" type="password" id="pwd-confirm">
+      </div>
+      <div id="pwdResult"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('pwdModal')">إلغاء</button>
+      <button class="btn btn-primary" onclick="changePassword()">حفظ</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal إدارة المستخدم -->
+<div id="userModal" class="modal-overlay">
+  <div class="modal-box" style="max-width:560px">
+    <div class="modal-hdr">
+      <span id="userModalTitle">👤 إضافة مستخدم</span>
+      <button class="modal-close" onclick="closeModal('userModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="u-row">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">
+        <div class="form-group">
+          <div class="form-label">اسم المستخدم <span style="color:var(--red)">*</span></div>
+          <input class="form-control" id="u-username" placeholder="مثال: ahmad">
+        </div>
+        <div class="form-group">
+          <div class="form-label">الاسم الكامل</div>
+          <input class="form-control" id="u-name" placeholder="أحمد محمد">
+        </div>
+        <div class="form-group">
+          <div class="form-label">كلمة المرور <span id="u-pwd-hint" style="font-size:11px;color:#718096"></span></div>
+          <input class="form-control" type="password" id="u-password" placeholder="••••••••">
+        </div>
+        <div class="form-group">
+          <div class="form-label">البريد الإلكتروني</div>
+          <input class="form-control" type="email" id="u-email" placeholder="email@example.com">
+        </div>
+      </div>
+      <div class="form-group">
+        <div class="form-label">الدور (يحدد الصلاحيات الافتراضية)</div>
+        <select class="form-control" id="u-role" onchange="loadRolePerms()">
+          <option value="admin">مدير عام</option>
+          <option value="manager">مدير فرعي</option>
+          <option value="employee" selected>موظف</option>
+          <option value="viewer">مشاهد</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <div class="form-label" style="margin-bottom:8px">تخصيص الصلاحيات</div>
+        <div id="permsGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:2px 8px;padding:10px 12px;background:var(--gray-l);border-radius:8px;border:1px solid var(--border)">
+          <div style="color:#718096;font-size:12px">جارٍ التحميل...</div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="u-active" checked> الحساب نشط
+        </label>
+      </div>
+      <div id="userResult"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('userModal')">إلغاء</button>
+      <button class="btn btn-success" onclick="saveUser()">💾 حفظ</button>
+    </div>
+  </div>
+</div>
+<!-- شاشة تسجيل الدخول -->
+<div id="loginOverlay" style="display:none;position:fixed;inset:0;background:rgba(26,58,92,.97);z-index:99999;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:14px;padding:32px;max-width:400px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+    <div style="text-align:center;margin-bottom:24px">
+      <div style="font-size:40px;margin-bottom:8px">🏢</div>
+      <div style="font-size:18px;font-weight:600;color:var(--navy)">نظام إدارة الأملاك</div>
+      <div style="font-size:12px;color:#718096;margin-top:4px">يرجى تسجيل الدخول للمتابعة</div>
+    </div>
+    <div class="form-group">
+      <div class="form-label">اسم المستخدم</div>
+      <input class="form-control" id="loginUsername" placeholder="admin" autocomplete="username">
+    </div>
+    <div class="form-group">
+      <div class="form-label">كلمة المرور</div>
+      <input class="form-control" type="password" id="loginPassword" placeholder="••••••••"
+             autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+    <button class="btn btn-primary" style="width:100%;padding:10px;font-size:14px"
+            onclick="doLogin()" id="loginBtn">تسجيل الدخول</button>
+    <div id="loginError" style="display:none;margin-top:12px;font-size:12px;color:var(--red);text-align:center;padding:8px;background:#fff5f5;border-radius:6px"></div>
+    
+  </div>
+</div>
+
+
+</body>
+</html>
