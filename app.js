@@ -1353,6 +1353,23 @@ function showLoginScreen() {
 function showMainUI() {
   document.getElementById('loginOverlay').style.display = 'none';
 
+  // ── دمج صلاحيات الدور لضمان تطبيق الصلاحيات الجديدة على الجلسات القديمة ──
+  if (_currentUser) {
+    var perms = _currentUser.perms || [];
+    // admin دائماً يملك كل الصلاحيات
+    if (_currentUser.role === 'admin' && perms.indexOf('admin') < 0) {
+      perms = perms.concat(['admin']);
+    }
+    // أضف صلاحيات الصيانة تلقائياً إذا لم تُضبط بعد (لأنها أُضيفت حديثاً)
+    var mntPerms = ['maintenance.view','maintenance.add','maintenance.edit','maintenance.delete'];
+    var hasMnt = mntPerms.some(function(p){ return perms.indexOf(p) >= 0; });
+    if (!hasMnt && _currentUser.role) {
+      var roleDef = ROLE_DEFAULT_PERMS[_currentUser.role] || [];
+      mntPerms.forEach(function(p){ if (roleDef.indexOf(p) >= 0 && perms.indexOf(p) < 0) perms.push(p); });
+    }
+    _currentUser.perms = expandPermsClient_(perms);
+  }
+
   // ── شريط المستخدم ──────────────────────────────
   const bar = document.getElementById('userBar');
   if (bar) {
@@ -1465,15 +1482,9 @@ function resetClientStateAfterLogout() {
 
 function doLogout() {
   if (!confirm('هل تريد تسجيل الخروج؟')) return;
-  google.script.run
-    .withSuccessHandler(() => {
-      resetClientStateAfterLogout();
-    })
-    .withFailureHandler(() => {
-      // حتى لو فشل طلب الخادم، لا نترك المستخدم أمام شاشة بيضاء.
-      resetClientStateAfterLogout();
-    })
-    .logout();
+  // أخفِ الواجهة فوراً ثم أرسل طلب الخروج في الخلفية
+  resetClientStateAfterLogout();
+  google.script.run.withSuccessHandler(()=>{}).withFailureHandler(()=>{}).logout();
 }
 
 // ═══════════════════════════════════════════════
@@ -1589,14 +1600,20 @@ function saveUser() {
   if (!row && !data.password) { out.innerHTML = '<div class="result err">كلمة المرور مطلوبة للمستخدم الجديد</div>'; return; }
 
   const handler = r => {
-    if (r.error) { out.innerHTML = '<div class="result err">' + r.error + '</div>'; return; }
-    out.innerHTML = '<div class="result">✅ ' + (r.message || 'تم') + '</div>';
+    // إذا انتهت الجلسة أثناء الحفظ، أعِد التحقق منها بدل التوقف
+    if (r && r.error && String(r.error).indexOf('الجلسة') >= 0) {
+      out.innerHTML = '<div class="result err">⚠️ انتهت الجلسة — جارٍ التحقق مجدداً...</div>';
+      setTimeout(() => { closeModal('userModal'); checkSession(); }, 1500);
+      return;
+    }
+    if (r && r.error) { out.innerHTML = '<div class="result err">' + r.error + '</div>'; return; }
+    out.innerHTML = '<div class="result">✅ ' + (r && r.message || 'تم الحفظ') + '</div>';
     setTimeout(() => { closeModal('userModal'); loadUsers(); }, 1200);
   };
   if (row > 0) {
-    google.script.run.withSuccessHandler(handler).updateUser(row, data);
+    google.script.run.withSuccessHandler(handler).withFailureHandler(e => { out.innerHTML = '<div class="result err">' + e.message + '</div>'; }).updateUser(row, data);
   } else {
-    google.script.run.withSuccessHandler(handler).addUser(data);
+    google.script.run.withSuccessHandler(handler).withFailureHandler(e => { out.innerHTML = '<div class="result err">' + e.message + '</div>'; }).addUser(data);
   }
 }
 
