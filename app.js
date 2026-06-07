@@ -403,8 +403,9 @@ const exp = data.units.filter(
 
   const grid = document.getElementById('bMapGrid'); grid.innerHTML='';
   data.units.forEach(u => {
-    const cls = u.status==='مشغولة'?'unit-occ':u.status==='تشارف انتهاء'?'unit-exp':'unit-vac';
-    const lbl = u.status==='مشغولة'?'مشغولة':u.status==='تشارف انتهاء'?'قريب انتهاء':'فارغة';
+    const _isExp=u.status==='شارف على الانتهاء'||u.status==='تشارف انتهاء';
+    const cls = u.status==='مشغولة'?'unit-occ':_isExp?'unit-exp':'unit-vac';
+    const lbl = u.status==='مشغولة'?'مشغولة':_isExp?'قريب انتهاء':'فارغة';
     grid.innerHTML+=`<div class="unit-cell ${cls}" onclick="showUnitDetail('${esc(u.unit)}','${esc(data.buildingName)}')">
       <div class="unit-num">${u.unit}</div>
       <div class="unit-lbl">${lbl}</div>
@@ -688,6 +689,9 @@ function saveContract() {
   if(!data.tenant){toast('اسم المستأجر مطلوب','err');return;}
   if(!data.building){toast('اختر المبنى','err');return;}
   if(!data.unit){toast('رقم الوحدة مطلوب','err');return;}
+  if(!data.start){toast('تاريخ بداية العقد مطلوب','err');return;}
+  if(!data.end){toast('تاريخ انتهاء العقد مطلوب','err');return;}
+  if(data.start && data.end && data.end < data.start){toast('تاريخ الانتهاء يجب أن يكون بعد تاريخ البداية','err');return;}
   const btn=document.getElementById('cSaveBtn');
   btn.disabled=true; btn.innerHTML='<span class="spin"></span>جارٍ الحفظ...';
   const cb=r=>{
@@ -730,8 +734,10 @@ function openPaymentModal(row,name,rent,paid) {
   document.getElementById('payRow').value=row;
   document.getElementById('payAmount').value='';
   document.getElementById('payResult').innerHTML='';
+  const remaining=Math.max(0,Number(rent||0)-Number(paid||0));
+  document.getElementById('payAmount').dataset.maxAmount=remaining;
   const h = document.getElementById('payHistory'); if (h) h.innerHTML = '<div style="padding:8px;color:#718096">جارٍ التحميل...</div>';
-  document.getElementById('payInfo').innerHTML=`<strong>${escHtml(name)}</strong><br>الإيجار: ${nf(rent)} ر.س &nbsp;|&nbsp; مدفوع: <span style="color:var(--green)">${nf(paid)} ر.س</span> &nbsp;|&nbsp; متبقي: <span style="color:var(--red)">${nf(rent-paid)} ر.س</span>`;
+  document.getElementById('payInfo').innerHTML=`<strong>${escHtml(name)}</strong><br>الإيجار: ${nf(rent)} ر.س &nbsp;|&nbsp; مدفوع: <span style="color:var(--green)">${nf(paid)} ر.س</span> &nbsp;|&nbsp; متبقي: <span style="color:var(--red)">${nf(remaining)} ر.س</span>`;
   openModal('paymentModal');
   loadContractPaymentHistory(row);
 }
@@ -739,8 +745,11 @@ function openPaymentModal(row,name,rent,paid) {
 function savePayment() {
   if (!hasPerm('payments.add')) { toast('ليس لديك الصلاحية المطلوبة', 'err'); return; }
   const row=parseInt(document.getElementById('payRow').value);
-  const amt=parseFloat(document.getElementById('payAmount').value);
-  if(!amt||amt<=0){toast('أدخل مبلغاً صحيحاً','err');return;}
+  const amtInput=document.getElementById('payAmount');
+  const amt=parseFloat(amtInput.value);
+  const maxAmt=parseFloat(amtInput.dataset.maxAmount||'0');
+  if(!amt||amt<=0||isNaN(amt)){toast('أدخل مبلغاً صحيحاً','err');return;}
+  if(maxAmt>0&&amt>maxAmt){toast(`المبلغ المدخل (${nf(amt)} ر.س) يتجاوز المتبقي (${nf(maxAmt)} ر.س)`,'err');return;}
   google.script.run
     .withSuccessHandler(r=>{
       if(r.error){toast('❌ '+r.error,'err');return;}
@@ -988,7 +997,8 @@ function sendSmsAction(){
   else if(target==='nopay') google.script.run.withSuccessHandler(cb).withFailureHandler(fail).sendPaymentReminders(false);
   else if(target==='building'){
     const bldg=document.getElementById('smsBldg').value;
-    google.script.run.withSuccessHandler(cb).withFailureHandler(fail).sendToBuildingCustom(bldg,msg,'ساري');
+    if(!bldg){toast('اختر المبنى أولاً','err');btn.disabled=false;btn.textContent='📤 إرسال';return;}
+    google.script.run.withSuccessHandler(cb).withFailureHandler(fail).sendToBuildingActiveCustom(bldg,msg);
   }
 }
 
@@ -1800,9 +1810,13 @@ document.querySelectorAll('.modal-overlay').forEach(el=>{
 // ── Populate selects ──────────────────────────
 function populateAllSelects(){
   if(!S.stats) return;
-  const buildings=Object.keys(S.stats.byBuilding);
+  const statsBuildings=Object.keys(S.stats.byBuilding);
+  // smsBldg يستخدم قائمة المباني الكاملة حتى يشمل المباني بدون عقود
+  const allBuildings=(S.buildings||[]).map(b=>b.name);
+  const buildingsBySelect={smsBldg:allBuildings.length?allBuildings:statsBuildings};
   ['fBldg','mBldg','smsBldg','mntBldgFilter'].forEach(id=>{
     const sel=document.getElementById(id); if(!sel) return;
+    const buildings=buildingsBySelect[id]||statsBuildings;
     const cur=sel.value; while(sel.options.length>1) sel.remove(1);
     buildings.forEach(b=>{ const o=document.createElement('option'); o.value=o.text=b; sel.add(o); });
     if(cur) sel.value=cur;
@@ -1823,7 +1837,7 @@ function appendMsg(kind, text, isErr){
 }
 
 function statusBadge(s){
-  const m={'ساري':'b-green','شارف على الانتهاء':'b-amber','منتهي':'b-gray'};
+  const m={'ساري':'b-green','شارف على الانتهاء':'b-amber','تشارف انتهاء':'b-amber','منتهي':'b-gray'};
   return `<span class="badge ${m[s]||'b-gray'}">${s||'—'}</span>`;
 }
 function toast(msg,type=''){
@@ -1944,7 +1958,7 @@ function autoFillMaintenanceTenant() {
   if (!building || !unit) return;
   const contract = (S.contracts || []).find(c =>
     c.building === building && String(c.unit) === String(unit) &&
-    (c.status === 'ساري' || c.status === 'شارف على الانتهاء')
+    (c.status === 'ساري' || c.status === 'شارف على الانتهاء' || c.status === 'تشارف انتهاء')
   );
   if (contract) document.getElementById('mnt-tenant').value = contract.tenant || '';
 }
@@ -2029,6 +2043,8 @@ function confirmDeleteMaintenance(row) {
 
   }
 
+  const CACHE_MAX_AGE_MS = 30 * 60 * 1000; // 30 دقيقة
+
   window.loadData = function () {
 
     try {
@@ -2038,12 +2054,16 @@ function confirmDeleteMaintenance(row) {
       if (cached) {
 
         const obj = JSON.parse(cached);
+        const age = Date.now() - (obj.time || 0);
 
-        if (obj && obj.data) {
+        if (obj && obj.data && age < CACHE_MAX_AGE_MS) {
 
-          console.log("Using cached data");
+          console.log("Using cached data (age: " + Math.round(age/1000) + "s)");
 
           originalApply(obj.data);
+        } else if (age >= CACHE_MAX_AGE_MS) {
+          localStorage.removeItem(CACHE_KEY);
+          console.log("Cache expired, fetching fresh data");
         }
       }
 
