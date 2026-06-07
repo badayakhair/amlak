@@ -1988,3 +1988,65 @@ function confirmDeleteMaintenance(row) {
     .withFailureHandler(e => toast('خطأ: ' + e.message, 'err'))
     .deleteMaintenance(row);
 }
+// =====================================================
+// PATCH: تحسين سرعة التحميل + كاش محلي
+// أضفه في آخر app.js
+// =====================================================
+
+(function () {
+
+  const CACHE_KEY = "amlak_cached_data_v1";
+
+  const originalLoadData = window.loadData;
+
+  window.loadData = async function () {
+
+    try {
+      const cached = localStorage.getItem(CACHE_KEY);
+
+      if (cached) {
+        const data = JSON.parse(cached);
+
+        if (data.contracts) window.contracts = data.contracts;
+        if (data.buildings) window.buildings = data.buildings;
+        if (data.tenants) window.tenants = data.tenants;
+        if (data.dashboard) window.dashboardStats = data.dashboard;
+
+        try {
+          if (typeof renderDashboard === "function") renderDashboard();
+          if (typeof renderContracts === "function") renderContracts();
+          if (typeof renderManage === "function") renderManage();
+          if (typeof renderBuildings === "function") renderBuildings();
+          if (typeof renderTenants === "function") renderTenants();
+        } catch (e) {}
+      }
+    } catch (e) {
+      console.error("Cache load error", e);
+    }
+
+    try {
+
+      const fresh = await api("getAllData");
+
+      if (!fresh) return;
+
+      localStorage.setItem(
+        CACHE_KEY,
+        JSON.stringify({
+          contracts: fresh.contracts || [],
+          buildings: fresh.buildings || [],
+          tenants: fresh.tenants || [],
+          dashboard: fresh.dashboard || {}
+        })
+      );
+
+      if (typeof originalLoadData === "function") {
+        return originalLoadData.apply(this, arguments);
+      }
+
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+})();
