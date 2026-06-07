@@ -383,8 +383,14 @@ function loadBuildingMap() {
 function renderBuildingMap(data) {
   document.getElementById('mapTitle').textContent = `🏢 ${data.buildingName} — ${data.units.length} وحدة`;
 
-  const occ = data.units.filter(u=>u.status==='مشغولة').length;
-  const exp = data.units.filter(u=>u.status==='تشارف انتهاء').length;
+  const occ = data.units.filter(
+  u => u.status === 'مشغولة'
+).length;
+
+const exp = data.units.filter(
+  u => u.status === 'تشارف انتهاء' ||
+       u.status === 'شارف على الانتهاء'
+).length;
   const vac = data.units.filter(u=>u.status==='فارغة').length;
 
   const statsEl = document.getElementById('mapStats');
