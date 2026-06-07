@@ -420,7 +420,7 @@ const exp = data.units.filter(
     <div class="metric m-green"><div class="metric-label">مشغولة</div><div class="metric-value">${occ}</div></div>
     <div class="metric m-amber"><div class="metric-label">تشارف انتهاء</div><div class="metric-value">${exp}</div></div>
     <div class="metric m-red"><div class="metric-label">فارغة</div><div class="metric-value">${vac}</div></div>
-    <div class="metric m-blue"><div class="metric-label">نسبة الإشغال</div><div class="metric-value">${data.units.length?Math.round(occ/data.units.length*100):0}%</div></div>`;
+    <div class="metric m-blue"><div class="metric-label">نسبة الإشغال</div><div class="metric-value">${data.units.length?Math.round((occ+exp)/data.units.length*100):0}%</div></div>`;
 
   const grid = document.getElementById('bMapGrid'); grid.innerHTML='';
   data.units.forEach(u => {
@@ -616,22 +616,23 @@ function renderBuildingsTable() {
   // احسب الإحصائيات من S.contracts مباشرة (مصدر موثوق)
   const stats = {};
   (S.contracts || []).forEach(c => {
-    if (!c.building) return;
-    if (!stats[c.building]) stats[c.building] = { occupied: new Set(), allUnits: new Set() };
-    if (c.unit) stats[c.building].allUnits.add(String(c.unit));
-    if (
-    c.status === 'ساري' ||
-    c.status === 'شارف على الانتهاء' ||
-    c.status === 'تشارف انتهاء'
-) {
-      if (c.unit) stats[c.building].occupied.add(String(c.unit));
+    const bName = String(c.building || '').trim();
+    if (!bName) return;
+    if (!stats[bName]) stats[bName] = { occupied: new Set(), occupiedNoUnit: 0, allUnits: new Set() };
+    if (c.unit) stats[bName].allUnits.add(String(c.unit));
+    if (c.status === 'ساري' || c.status === 'شارف على الانتهاء' || c.status === 'تشارف انتهاء') {
+      if (c.unit) {
+        stats[bName].occupied.add(String(c.unit));
+      } else {
+        stats[bName].occupiedNoUnit++;
+      }
     }
   });
 
   tbody.innerHTML=S.buildings.map(b=>{
-    const s = stats[b.name];
+    const s = stats[String(b.name || '').trim()];
     const totalU = b.totalUnits > 0 ? b.totalUnits : (s ? s.allUnits.size : 0);
-    const occ = s ? s.occupied.size : 0;
+    const occ = s ? s.occupied.size + s.occupiedNoUnit : 0;
     const vac = Math.max(0, totalU - occ);
     const pct = totalU > 0 ? Math.round(occ / totalU * 100) : 0;
     return `<tr>
