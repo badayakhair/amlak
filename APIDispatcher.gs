@@ -1,123 +1,172 @@
 // ═══════════════════════════════════════════════════════════════
-// APIDispatcher.gs — أضف هذا الكود إلى مشروع Apps Script
-// يحدد الدوال المسموح باستدعائها عبر JSONP من الواجهة
+// APIDispatcher.gs — JSONP bridge for the GitHub Pages frontend
+// أضف هذا الملف إلى مشروع Apps Script بجانب Code.gs
 // ═══════════════════════════════════════════════════════════════
 
-var ALLOWED_ACTIONS = {
-  // المصادقة
-  'login':                    true,
-  'logout':                   true,
-  'whoami':                   true,
-  'changeMyPassword':         true,
+function handleApiJsonp_(e) {
+  e = e || {};
+  e.parameter = e.parameter || {};
 
-  // البيانات الرئيسية
-  'getAllData':                true,
+  var callback = String(e.parameter.callback || 'callback').replace(/[^a-zA-Z0-9_$\.]/g, '');
+  if (!callback) callback = 'callback';
 
-  // العقود
-  'addContract':              true,
-  'updateContract':           true,
-  'deleteContract':           true,
-  'listDeletedContracts':     true,
-  'restoreContract':          true,
-
-  // المباني
-  'addBuilding':              true,
-  'updateBuilding':           true,
-  'archiveBuilding':          true,
-  'getBuildingMap':           true,
-  'getArchivedBuildings':     true,
-  'restoreBuilding':          true,
-
-  // المستأجرون
-  'getTenantContracts':       true,
-
-  // الدفعات
-  'addPayment':               true,
-  'getContractPaymentHistory':true,
-  'getPaymentLog':            true,
-
-  // المالية
-  'getFinancialStats':        true,
-
-  // التنبيهات والاستحقاقات
-  'getUpcomingDueDates':      true,
-
-  // الرسائل
-  'getSmsTemplates':          true,
-  'saveSmsTemplates':         true,
-  'getAutoSmsSettings':       true,
-  'saveAutoSmsSettings':      true,
-  'sendExpiryReminders':      true,
-  'sendPaymentReminders':     true,
-  'sendToBuildingCustom':     true,
-  'sendSingleSms':            true,
-  'getMessageLog':            true,
-
-  // المساعد الذكي
-  'askAI':                    true,
-  'setAIModel':               true,
-  'getAISettings':            true,
-
-  // المستخدمون
-  'getUsers':                 true,
-  'addUser':                  true,
-  'updateUser':               true,
-  'deleteUser':               true,
-
-  // سجل العمليات
-  'getActivityLog':           true,
-
-  // النسخ الاحتياطي
-  'getBackupStatus':          true,
-  'backupNow':                true,
-  'setupDailyBackup':         true,
-  'disableDailyBackup':       true,
-  'listBackupFiles':          true,
-  'restoreBackupFromFile':    true,
-
-  // ── قسم الصيانة (مُضاف) ──────────────────────
-  'getMaintenanceList':       true,
-  'addMaintenance':           true,
-  'updateMaintenance':        true,
-  'deleteMaintenance':        true
-};
-
-/**
- * نقطة الدخول الرئيسية لطلبات JSONP من الواجهة.
- * تتحقق من الصلاحية ثم تستدعي الدالة المطلوبة.
- */
-function doGet(e) {
-  var callback = e.parameter.callback || 'cb';
-  var result;
+  var out;
   try {
-    var payload = JSON.parse(decodeURIComponent(e.parameter.payload || '{}'));
-    var action  = payload.action;
-    var args    = payload.args || [];
-    var token   = payload.token || '';
-
-    if (!action || !ALLOWED_ACTIONS[action]) {
-      result = { __error: 'الإجراء غير مسموح: ' + action };
-    } else {
-      // تحقق من الجلسة لجميع الطلبات عدا تسجيل الدخول
-      if (action !== 'login') {
-        var session = getSessionByToken_(token);
-        if (!session) {
-          result = { __error: 'انتهت الجلسة. يرجى تسجيل الدخول مجدداً.' };
-        } else {
-          setCurrentSession_(session);
-          result = this[action].apply(this, args);
-        }
-      } else {
-        result = this[action].apply(this, args);
-      }
+    var rawPayload = String(e.parameter.payload || '{}');
+    var req;
+    try {
+      req = JSON.parse(rawPayload);
+    } catch (parseErr) {
+      req = JSON.parse(decodeURIComponent(rawPayload));
     }
+
+    var action = String(req.action || '');
+    var args = Array.isArray(req.args) ? req.args : [];
+    var token = String(req.token || '');
+
+    out = callPublicApi_(action, args, token);
   } catch (err) {
-    result = { __error: err.message };
+    out = { __error: err && err.message ? err.message : String(err) };
   }
 
-  var output = ContentService
-    .createTextOutput(callback + '(' + JSON.stringify(result) + ')')
+  return ContentService
+    .createTextOutput(callback + '(' + JSON.stringify(out) + ');')
     .setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
 
-  return output;
+function apiEnsureMaintenancePermissions_() {
+  try {
+    if (typeof ensureMaintenancePermissions_ === 'function') ensureMaintenancePermissions_();
+  } catch (e) {}
+}
+
+function apiNormalizeSession_(sessionRaw) {
+  apiEnsureMaintenancePermissions_();
+  try {
+    var session = JSON.parse(sessionRaw || '{}');
+    if (session && Array.isArray(session.perms) && typeof expandPerms_ === 'function') {
+      session.perms = expandPerms_(session.perms);
+    }
+    return JSON.stringify(session);
+  } catch (e) {
+    return sessionRaw;
+  }
+}
+
+function apiRestoreSession_(token) {
+  token = String(token || '');
+  if (!token) return null;
+
+  var cached = CacheService.getScriptCache().get('API_SESSION_' + token);
+  if (!cached) return null;
+
+  cached = apiNormalizeSession_(cached);
+  PropertiesService.getUserProperties().setProperty('SESSION', cached);
+  return cached;
+}
+
+function callPublicApi_(action, args, token) {
+  apiEnsureMaintenancePermissions_();
+
+  if (action === 'login') {
+    var result = login.apply(null, args || []);
+    if (result && result.success) {
+      var sessionRaw = PropertiesService.getUserProperties().getProperty('SESSION');
+      var apiToken = Utilities.getUuid();
+
+      if (sessionRaw) {
+        sessionRaw = apiNormalizeSession_(sessionRaw);
+        PropertiesService.getUserProperties().setProperty('SESSION', sessionRaw);
+        CacheService.getScriptCache().put('API_SESSION_' + apiToken, sessionRaw, 21600);
+        result.token = apiToken;
+      }
+    }
+    return result;
+  }
+
+  if (action === 'logout') {
+    if (token) apiRestoreSession_(token);
+    var logoutResult = logout();
+    if (token) CacheService.getScriptCache().remove('API_SESSION_' + token);
+    return logoutResult;
+  }
+
+  if (action !== 'whoami') {
+    if (!token) return { error: 'الجلسة غير موجودة. سجل الدخول مرة أخرى.' };
+    if (!apiRestoreSession_(token)) return { error: 'انتهت الجلسة. سجل الدخول مرة أخرى.' };
+  } else if (token) {
+    apiRestoreSession_(token);
+  }
+
+  var allowed = {
+    whoami: 'whoami',
+    changeMyPassword: 'changeMyPassword',
+    getAllData: 'getAllData',
+    getContracts: 'getContracts',
+    getBuildings: 'getBuildings',
+    getTenantHistory: 'getTenantHistory',
+    getDashboardStats: 'getDashboardStats',
+    getFinancialStats: 'getFinancialStats',
+    getBuildingMap: 'getBuildingMap',
+    getTenantContracts: 'getTenantContracts',
+    getUpcomingDueDates: 'getUpcomingDueDates',
+
+    addContract: 'addContract',
+    updateContract: 'updateContract',
+    deleteContract: 'deleteContract',
+    listDeletedContracts: 'listDeletedContracts',
+    restoreContract: 'restoreContract',
+
+    addPayment: 'addPayment',
+    getContractPaymentHistory: 'getContractPaymentHistory',
+    getPaymentLog: 'getPaymentLog',
+
+    addBuilding: 'addBuilding',
+    updateBuilding: 'updateBuilding',
+    deleteBuilding: 'deleteBuilding',
+    archiveBuilding: 'archiveBuilding',
+    getArchivedBuildings: 'getArchivedBuildings',
+    restoreBuilding: 'restoreBuilding',
+
+    askAI: 'askAI',
+    getAISettings: 'getAISettings',
+    setAIModel: 'setAIModel',
+
+    getSmsTemplates: 'getSmsTemplates',
+    saveSmsTemplates: 'saveSmsTemplates',
+    getAutoSmsSettings: 'getAutoSmsSettings',
+    saveAutoSmsSettings: 'saveAutoSmsSettings',
+    sendSingleSms: 'sendSingleSms',
+    sendExpiryReminders: 'sendExpiryReminders',
+    sendPaymentReminders: 'sendPaymentReminders',
+    sendToBuildingCustom: 'sendToBuildingCustom',
+    getMessageLog: 'getMessageLog',
+
+    getActivityLog: 'getActivityLog',
+
+    getUsers: 'getUsers',
+    addUser: 'addUser',
+    updateUser: 'updateUser',
+    deleteUser: 'deleteUser',
+
+    getBackupStatus: 'getBackupStatus',
+    setupDailyBackup: 'setupDailyBackup',
+    disableDailyBackup: 'disableDailyBackup',
+    backupNow: 'backupNow',
+    listBackupFiles: 'listBackupFiles',
+    restoreBackupFromFile: 'restoreBackupFromFile',
+
+    getMaintenanceList: 'getMaintenanceList',
+    addMaintenance: 'addMaintenance',
+    updateMaintenance: 'updateMaintenance',
+    deleteMaintenance: 'deleteMaintenance'
+  };
+
+  var fnName = allowed[action];
+  var root = typeof globalThis !== 'undefined' ? globalThis : this;
+  if (!fnName || typeof root[fnName] !== 'function') {
+    throw new Error('API action غير مسموح أو غير موجود: ' + action);
+  }
+
+  return root[fnName].apply(root, args || []);
 }
