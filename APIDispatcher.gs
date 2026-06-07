@@ -111,11 +111,12 @@ function callPublicApi_(action, args, token) {
     return logoutResult;
   }
 
-  if (action !== 'whoami') {
+  if (action === 'whoami') {
+    // whoami بدون توكن صالح = غير مسجَّل، لا نعتمد على PropertiesService وحده
+    if (!token || !apiRestoreSession_(token)) return { loggedIn: false };
+  } else {
     if (!token) return { error: 'الجلسة غير موجودة. سجل الدخول مرة أخرى.' };
     if (!apiRestoreSession_(token)) return { error: 'انتهت الجلسة. سجل الدخول مرة أخرى.' };
-  } else if (token) {
-    apiRestoreSession_(token);
   }
 
   var allowed = {
