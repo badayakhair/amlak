@@ -1989,64 +1989,59 @@ function confirmDeleteMaintenance(row) {
     .deleteMaintenance(row);
 }
 // =====================================================
-// PATCH: تحسين سرعة التحميل + كاش محلي
-// أضفه في آخر app.js
+// PATCH FIXED
+// تحسين سرعة الدخول مع كاش متوافق مع نظام S
 // =====================================================
 
 (function () {
 
-  const CACHE_KEY = "amlak_cached_data_v1";
+  const CACHE_KEY = "amlak_cache_v2";
 
+  const originalApply = window.applyAllData_;
   const originalLoadData = window.loadData;
 
-  window.loadData = async function () {
+  if (typeof originalApply === "function") {
+
+    window.applyAllData_ = function (data) {
+
+      try {
+        localStorage.setItem(
+          CACHE_KEY,
+          JSON.stringify({
+            time: Date.now(),
+            data: data
+          })
+        );
+      } catch (e) {}
+
+      return originalApply(data);
+    };
+
+  }
+
+  window.loadData = function () {
 
     try {
+
       const cached = localStorage.getItem(CACHE_KEY);
 
       if (cached) {
-        const data = JSON.parse(cached);
 
-        if (data.contracts) window.contracts = data.contracts;
-        if (data.buildings) window.buildings = data.buildings;
-        if (data.tenants) window.tenants = data.tenants;
-        if (data.dashboard) window.dashboardStats = data.dashboard;
+        const obj = JSON.parse(cached);
 
-        try {
-          if (typeof renderDashboard === "function") renderDashboard();
-          if (typeof renderContracts === "function") renderContracts();
-          if (typeof renderManage === "function") renderManage();
-          if (typeof renderBuildings === "function") renderBuildings();
-          if (typeof renderTenants === "function") renderTenants();
-        } catch (e) {}
+        if (obj && obj.data) {
+
+          console.log("Using cached data");
+
+          originalApply(obj.data);
+        }
       }
+
     } catch (e) {
-      console.error("Cache load error", e);
+      console.log(e);
     }
 
-    try {
-
-      const fresh = await api("getAllData");
-
-      if (!fresh) return;
-
-      localStorage.setItem(
-        CACHE_KEY,
-        JSON.stringify({
-          contracts: fresh.contracts || [],
-          buildings: fresh.buildings || [],
-          tenants: fresh.tenants || [],
-          dashboard: fresh.dashboard || {}
-        })
-      );
-
-      if (typeof originalLoadData === "function") {
-        return originalLoadData.apply(this, arguments);
-      }
-
-    } catch (err) {
-      console.error(err);
-    }
+    return originalLoadData();
   };
 
 })();
