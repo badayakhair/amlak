@@ -12,9 +12,26 @@
       token: token
     }));
 
+    function cleanup(){
+      clearTimeout(timeoutTimer);
+      clearTimeout(warnTimer);
+      try { delete window[cbName]; } catch(e) { window[cbName] = undefined; }
+      if (script && script.parentNode) script.parentNode.removeChild(script);
+    }
+
+    // تحذير مرئي بعد 15 ثانية
+    var warnTimer = setTimeout(function(){
+      if (typeof window.toast === 'function') window.toast('الاتصال بطيء، يُرجى الانتظار…', '');
+    }, 15000);
+
+    // إلغاء الطلب وإظهار خطأ بعد 60 ثانية
+    var timeoutTimer = setTimeout(function(){
+      cleanup();
+      if (fail) fail(new Error('انتهت مهلة الاتصال بالـ API'));
+    }, 60000);
+
     window[cbName] = function(res){
-      try { delete window[cbName]; } catch(e) {}
-      if (script.parentNode) script.parentNode.removeChild(script);
+      cleanup();
 
       if (res && res.__error) {
         if (fail) fail(new Error(res.__error));
@@ -33,6 +50,7 @@
     };
 
     script.onerror = function(){
+      cleanup();
       if (fail) fail(new Error('تعذر الاتصال بالـ API'));
     };
 
