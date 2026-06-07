@@ -17,13 +17,20 @@
       token: token
     }));
 
-    var timer = setTimeout(function () {
+    // تحذير مرئي بعد 15 ثانية
+    var warnTimer = setTimeout(function () {
+      if (typeof window.toast === 'function') window.toast('الاتصال بطيء، يُرجى الانتظار…', '');
+    }, 15000);
+
+    // إلغاء الطلب وإظهار خطأ بعد 60 ثانية
+    var timeoutTimer = setTimeout(function () {
       cleanup();
       if (fail) fail(new Error('انتهت مهلة الاتصال بالـ API'));
     }, 60000);
 
     function cleanup() {
-      clearTimeout(timer);
+      clearTimeout(timeoutTimer);
+      clearTimeout(warnTimer);
       try { delete window[cbName]; } catch (e) { window[cbName] = undefined; }
       if (script && script.parentNode) script.parentNode.removeChild(script);
     }

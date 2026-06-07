@@ -1,4 +1,23 @@
-// قائمة كل الصلاحيات الممكنة مع تسمياتها
+// ── ثوابت الحالات (مرجع موحّد لتجنب الأخطاء الإملائية) ──────────
+const CONTRACT_STATUS = {
+  ACTIVE:    'ساري',
+  EXPIRING:  'شارف على الانتهاء',
+  EXPIRING2: 'تشارف انتهاء',  // قيمة قديمة قد تظهر في بيانات موجودة
+  ENDED:     'منتهي'
+};
+// دالة مساعدة: هل الحالة تعني "يشارف على الانتهاء"؟
+function isExpiring_(status) {
+  return status === CONTRACT_STATUS.EXPIRING || status === CONTRACT_STATUS.EXPIRING2;
+}
+// دالة مساعدة: هل العقد نشط؟
+function isActiveContract_(status) {
+  return status === CONTRACT_STATUS.ACTIVE || isExpiring_(status);
+}
+
+const MAINTENANCE_STATUS   = { NEW:'جديد', IN_PROGRESS:'قيد التنفيذ', DONE:'مكتمل', CANCELLED:'ملغي' };
+const MAINTENANCE_PRIORITY = { CRITICAL:'طارئ', HIGH:'عاجل', NORMAL:'عادي' };
+
+// ── قائمة كل الصلاحيات الممكنة مع تسمياتها ────────────────────
 const ALL_PERMS = [
   { key:'contracts.view',    label:'عرض العقود' },
   { key:'contracts.add',     label:'إضافة عقد' },
@@ -312,8 +331,10 @@ function renderDashboard() {
   document.getElementById('m-active').textContent = c.active;
   document.getElementById('m-exp').textContent    = c.expiring;
   document.getElementById('m-ended').textContent  = c.expired;
-  document.getElementById('m-rent').textContent   = canFinance ? nf(f.monthlyRent || Math.round((f.totalRent||0)/12)) : 'محجوب';
-  document.getElementById('m-rent-sub').textContent = canFinance ? ('سنوياً: ' + nf(f.annualRent || f.totalRent)) : 'لا تملك صلاحية المالية';
+  const annualRent = f.annualRent || f.totalRent || 0;
+  const monthlyEst = f.monthlyRent || (annualRent ? Math.round(annualRent / 12) : 0);
+  document.getElementById('m-rent').textContent   = canFinance ? nf(annualRent) : 'محجوب';
+  document.getElementById('m-rent-sub').textContent = canFinance ? ('تقديري شهري: ' + nf(monthlyEst) + ' ر.س') : 'لا تملك صلاحية المالية';
   document.getElementById('m-paid').textContent   = canFinance ? nf(f.totalPaid) : 'محجوب';
   document.getElementById('m-rem').textContent    = canFinance ? nf(f.remaining) : 'محجوب';
   document.getElementById('m-nopay').textContent  = c.noPay;
@@ -399,7 +420,7 @@ const exp = data.units.filter(
     <div class="metric m-green"><div class="metric-label">مشغولة</div><div class="metric-value">${occ}</div></div>
     <div class="metric m-amber"><div class="metric-label">تشارف انتهاء</div><div class="metric-value">${exp}</div></div>
     <div class="metric m-red"><div class="metric-label">فارغة</div><div class="metric-value">${vac}</div></div>
-    <div class="metric m-blue"><div class="metric-label">نسبة الإشغال</div><div class="metric-value">${data.units.length?Math.round((occ+exp)/data.units.length*100):0}%</div></div>`;
+    <div class="metric m-blue"><div class="metric-label">نسبة الإشغال</div><div class="metric-value">${data.units.length?Math.round(occ/data.units.length*100):0}%</div></div>`;
 
   const grid = document.getElementById('bMapGrid'); grid.innerHTML='';
   data.units.forEach(u => {
@@ -692,6 +713,8 @@ function saveContract() {
   if(!data.start){toast('تاريخ بداية العقد مطلوب','err');return;}
   if(!data.end){toast('تاريخ انتهاء العقد مطلوب','err');return;}
   if(data.start && data.end && data.end < data.start){toast('تاريخ الانتهاء يجب أن يكون بعد تاريخ البداية','err');return;}
+  const phoneErr=validateSaudiPhone_(data.phone);
+  if(phoneErr){toast(phoneErr,'err');return;}
   const btn=document.getElementById('cSaveBtn');
   btn.disabled=true; btn.innerHTML='<span class="spin"></span>جارٍ الحفظ...';
   const cb=r=>{
@@ -703,6 +726,10 @@ function saveContract() {
     }
     document.getElementById('cModalResult').innerHTML=`<div class="result">✅ ${(r&&r.message)||'تم الحفظ'}</div>`;
     toast((r&&r.message)||'تم الحفظ');
+    // عند إضافة عقد جديد: صِفر الفلاتر حتى يظهر العقد الجديد في القائمة
+    if(!rowNum){
+      ['searchInput','fBldg','fStatus','fType'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+    }
     silentRefresh();
     setTimeout(()=>closeModal('contractModal'),1200);
   };
@@ -765,13 +792,20 @@ function loadContractPaymentHistory(row) {
   const box = document.getElementById('payHistory');
   if (!box) return;
   box.innerHTML = '<div style="padding:8px;color:#718096">جارٍ التحميل...</div>';
+  // إذا لم يستجب الخادم خلال 15 ثانية، أظهر خيار إعادة المحاولة
+  const uiTimer = setTimeout(() => {
+    if (box.querySelector && box.innerHTML.includes('جارٍ التحميل')) {
+      box.innerHTML = `<div class="result err">استغرق التحميل وقتاً طويلاً. <button class="btn btn-sm" onclick="loadContractPaymentHistory(${parseInt(row)})">إعادة المحاولة</button></div>`;
+    }
+  }, 15000);
   google.script.run
     .withSuccessHandler(rows=>{
+      clearTimeout(uiTimer);
       rows = rows || [];
       if(!rows.length){ box.innerHTML = '<div style="padding:8px;color:#718096">لا توجد دفعات مسجلة لهذا العقد</div>'; return; }
       box.innerHTML = `<div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>المستخدم</th><th>المبلغ</th><th>قبل</th><th>بعد</th><th>المتبقي</th><th>ملاحظات</th></tr></thead><tbody>${rows.map(p=>`<tr><td style="font-size:11px;white-space:nowrap">${escHtml(p.date)}</td><td>${escHtml(p.username)}</td><td style="font-weight:600;direction:ltr;text-align:left">${nf(p.amount)}</td><td>${nf(p.before)}</td><td>${nf(p.after)}</td><td>${nf(p.remaining)}</td><td style="font-size:12px">${escHtml(p.notes)||'—'}</td></tr>`).join('')}</tbody></table></div>`;
     })
-    .withFailureHandler(e=>{ box.innerHTML = '<div class="result err">خطأ في تحميل سجل الدفعات: '+escHtml(e.message)+'</div>'; })
+    .withFailureHandler(e=>{ clearTimeout(uiTimer); box.innerHTML = '<div class="result err">خطأ في تحميل سجل الدفعات: '+escHtml(e.message)+'</div>'; })
     .getContractPaymentHistory(row);
 }
 
@@ -796,6 +830,9 @@ function saveBuilding() {
   if (!hasPerm(rowNum ? 'buildings.edit' : 'buildings.add')) { toast('ليس لديك الصلاحية المطلوبة', 'err'); return; }
   const data={name:document.getElementById('b-name').value.trim(),type:document.getElementById('b-type').value,totalUnits:document.getElementById('b-units').value,floors:document.getElementById('b-floors').value,notes:document.getElementById('b-notes').value.trim()};
   if(!data.name){toast('اسم المبنى مطلوب','err');return;}
+  const units=parseInt(data.totalUnits), floors=parseInt(data.floors);
+  if(isNaN(units)||units<1){toast('عدد الوحدات يجب أن يكون رقماً موجباً (1 على الأقل)','err');return;}
+  if(isNaN(floors)||floors<1){toast('عدد الطوابق يجب أن يكون رقماً موجباً (1 على الأقل)','err');return;}
   const btn=document.getElementById('bSaveBtn');
   btn.disabled=true; btn.innerHTML='<span class="spin"></span>...';
   const cb=r=>{
@@ -898,7 +935,8 @@ let tpls={
 function smsPartsInfo_(text) {
   const len = (text || '').length;
   if (!len) return '0 حرف';
-  const parts = len <= 70 ? 1 : Math.ceil(len / 67);
+  // الجزء الأول: 70 حرف. كل جزء إضافي: 67 حرف
+  const parts = len <= 70 ? 1 : 1 + Math.ceil((len - 70) / 67);
   return len + ' حرف — يُحتسب غالباً ' + parts + ' جزء SMS عربي';
 }
 function updateSmsCounter_(id, targetId) {
@@ -1077,20 +1115,28 @@ function updateNextDue() {
   const step = months[sched];
   if (!step) { out.textContent = '—'; return; }
 
-  const startD = new Date(start);
-  const endD   = end ? new Date(end) : null;
+  // إضافة T00:00:00 يمنع تفسير التاريخ كـ UTC مما يسبب انزياح يوم في بعض المناطق الزمنية
+  const startD = new Date(start + 'T00:00:00');
+  const endD   = end ? new Date(end + 'T00:00:00') : null;
   const today  = new Date(); today.setHours(0,0,0,0);
 
-  let next = new Date(startD);
-  next.setMonth(next.getMonth() + step);
-  // لا تبدأ الاستحقاقات من يوم بداية العقد. الاستحقاق الأول بعد فترة الجدولة.
-  // إذا كان الاستحقاق الأول بعد نهاية العقد، استخدم نهاية العقد كاستحقاق أخير/وحيد.
+  // setMonth وحده قد يتجاوز الشهر (مثلاً: 31 يناير + شهر = 3 مارس بدل 28 فبراير)
+  // addMonthsSafe_ تُثبّت اليوم في آخر يوم صالح في الشهر المستهدف
+  function addMonthsSafe_(date, months) {
+    const originalDay = date.getDate();
+    const d = new Date(date.getFullYear(), date.getMonth() + months, 1);
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    d.setDate(Math.min(originalDay, lastDay));
+    return d;
+  }
+
+  let next = addMonthsSafe_(startD, step);
+  // إذا كان الاستحقاق الأول بعد نهاية العقد، استخدم نهاية العقد
   if (endD && next > endD) next = new Date(endD);
 
   // أوجد أول استحقاق لم يحن بعد
   while (next < today) {
-    const candidate = new Date(next);
-    candidate.setMonth(candidate.getMonth() + step);
+    const candidate = addMonthsSafe_(next, step);
     if (endD && candidate > endD) { out.textContent = 'انتهت كل الاستحقاقات'; out.style.background='var(--peach)'; return; }
     next = candidate;
   }
@@ -1277,7 +1323,7 @@ function renderFinance(data) {
     document.getElementById('cy-expected').textContent = nf(cy.expected) + ' ر.س';
     document.getElementById('cy-remaining').textContent= nf(cy.remaining) + ' ر.س';
     document.getElementById('cy-progress').textContent = cy.progress + '%';
-    document.getElementById('cy-progress-bar').style.width = Math.min(100, cy.progress) + '%';
+    document.getElementById('cy-progress-bar').style.width = Math.min(100, Math.max(0, Number(cy.progress) || 0)) + '%';
   }
 
   // الشهري
@@ -1825,6 +1871,18 @@ function populateAllSelects(){
 
 // ── Utils ─────────────────────────────────────
 function nf(n){ var x=Number(n||0); return x?Math.round(x).toLocaleString('ar-SA'):'—'; }
+
+// ── التحقق من رقم الجوال السعودي ──────────────────────────────
+// يقبل: 05XXXXXXXX أو 009665XXXXXXXX أو +9665XXXXXXXX
+// يُعيد null إذا كان الرقم صحيحاً، أو رسالة خطأ نصية
+function validateSaudiPhone_(phone) {
+  if (!phone || !String(phone).trim()) return null; // الحقل اختياري
+  const cleaned = String(phone).replace(/[\s\-]/g, '');
+  if (/^05\d{8}$/.test(cleaned)) return null;
+  if (/^009665\d{8}$/.test(cleaned)) return null;
+  if (/^\+9665\d{8}$/.test(cleaned)) return null;
+  return 'رقم الجوال غير صحيح (يجب أن يبدأ بـ 05 ويكون 10 أرقام)';
+}
 function escHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function esc(s){ return escHtml(s).replace(/&#39;/g,"\\'"); }
 function appendMsg(kind, text, isErr){

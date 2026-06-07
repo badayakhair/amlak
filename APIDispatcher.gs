@@ -189,16 +189,29 @@ function callPublicApi_(action, args, token) {
     throw new Error('API action غير مسموح أو غير موجود: ' + action);
   }
 
-  // ── التحقق من صحة تواريخ العقد على جانب الخادم ──
+  // ── التحقق من صحة بيانات المبنى على جانب الخادم (batch 2) ──
+  if (action === 'addBuilding' || action === 'updateBuilding') {
+    var buildingData = (action === 'updateBuilding') ? args[1] : args[0];
+    if (typeof validateBuilding_ === 'function') {
+      var bldgErr = validateBuilding_(buildingData || {});
+      if (bldgErr) return bldgErr;
+    }
+  }
+
+  // ── التحقق من صحة تواريخ العقد والجوال على جانب الخادم (batch 1 + 2) ──
   if (action === 'addContract' || action === 'updateContract') {
     var contractData = (action === 'updateContract') ? args[1] : args[0];
     if (typeof validateContractDates_ === 'function') {
       var dateErr = validateContractDates_(contractData || {});
       if (dateErr) return dateErr;
     }
+    if (contractData && typeof validatePhone_ === 'function') {
+      var phoneErr = validatePhone_((contractData || {}).phone);
+      if (phoneErr) return phoneErr;
+    }
   }
 
-  // ── التحقق من صحة مبلغ الدفعة على جانب الخادم ──
+  // ── التحقق من صحة مبلغ الدفعة على جانب الخادم (batch 1) ──
   if (action === 'addPayment') {
     var payAmount = args[1];
     if (typeof validatePaymentAmount_ === 'function') {
