@@ -1353,21 +1353,11 @@ function showLoginScreen() {
 function showMainUI() {
   document.getElementById('loginOverlay').style.display = 'none';
 
-  // ── دمج صلاحيات الدور لضمان تطبيق الصلاحيات الجديدة على الجلسات القديمة ──
-  if (_currentUser) {
-    var perms = _currentUser.perms || [];
-    // admin دائماً يملك كل الصلاحيات
-    if (_currentUser.role === 'admin' && perms.indexOf('admin') < 0) {
-      perms = perms.concat(['admin']);
-    }
-    // أضف صلاحيات الصيانة تلقائياً إذا لم تُضبط بعد (لأنها أُضيفت حديثاً)
-    var mntPerms = ['maintenance.view','maintenance.add','maintenance.edit','maintenance.delete'];
-    var hasMnt = mntPerms.some(function(p){ return perms.indexOf(p) >= 0; });
-    if (!hasMnt && _currentUser.role) {
-      var roleDef = ROLE_DEFAULT_PERMS[_currentUser.role] || [];
-      mntPerms.forEach(function(p){ if (roleDef.indexOf(p) >= 0 && perms.indexOf(p) < 0) perms.push(p); });
-    }
-    _currentUser.perms = expandPermsClient_(perms);
+  // ── المدير العام يملك كل الصلاحيات دائماً بصرف النظر عن الجلسة المخزنة ──
+  if (_currentUser && _currentUser.role === 'admin') {
+    var _perms = _currentUser.perms || [];
+    if (_perms.indexOf('admin') < 0) _perms = _perms.concat(['admin']);
+    _currentUser.perms = _perms;
   }
 
   // ── شريط المستخدم ──────────────────────────────
