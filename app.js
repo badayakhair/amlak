@@ -200,7 +200,19 @@ checkSession();
 // ── Data loading ──────────────────────────────
 
 function applyAllData_(d) {
-  if (!d || d.error) { if (d && d.error) toast(d.error, 'err'); return; }
+  if (!d || d.error) {
+    if (d && d.error) {
+      var msg = String(d.error);
+      // إذا كان الخطأ متعلقاً بالجلسة، امسح التوكن وأعِد شاشة الدخول
+      if (msg.indexOf('الجلسة') >= 0 || msg.indexOf('سجل الدخول') >= 0) {
+        localStorage.removeItem('AMLAAK_TOKEN');
+        showLoginScreen();
+        return;
+      }
+      toast(msg, 'err');
+    }
+    return;
+  }
   S.stats = d.stats || null;
   S.dueAlerts = d.dueAlerts || [];
   S.contracts = d.contracts || [];
@@ -1416,6 +1428,11 @@ function renderFinance(data) {
 let _currentUser = null;
 
 function checkSession() {
+  // بدون توكن نعرف مباشرة أن المستخدم غير مسجَّل — لا حاجة لسؤال الخادم
+  if (!localStorage.getItem('AMLAAK_TOKEN')) {
+    showLoginScreen();
+    return;
+  }
   google.script.run
     .withSuccessHandler(r => {
       if (r && r.loggedIn) {
@@ -1423,6 +1440,7 @@ function checkSession() {
         showMainUI();
         if (r.warning) toast(r.warning, 'err');
       } else {
+        localStorage.removeItem('AMLAAK_TOKEN');
         showLoginScreen();
       }
     })
