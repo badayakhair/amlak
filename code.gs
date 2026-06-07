@@ -10,6 +10,19 @@ var MAINTENANCE_SHEET = 'الصيانة';
 // J=التكلفة الفعلية  K=الحالة  L=ملاحظات
 // M=أنشأ بواسطة  N=تاريخ الإنشاء  O=محذوف (TRUE/FALSE)
 
+function getMaintUsername_() {
+  try {
+    var raw = PropertiesService.getUserProperties().getProperty('SESSION');
+    if (!raw) return 'نظام';
+    var s = JSON.parse(raw);
+    return s.username || s.user || s.name || 'نظام';
+  } catch (e) { return 'نظام'; }
+}
+
+function safeLogActivity_(action, entity, details) {
+  try { logActivity_(action, entity, details); } catch (e) {}
+}
+
 function ensureMaintenanceSheet_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(MAINTENANCE_SHEET);
@@ -38,12 +51,14 @@ function getMaintenanceList() {
     var result = [];
     for (var i = 1; i < data.length; i++) {
       var row = data[i];
-      // تخطّي الصفوف المحذوفة
       if (row[14] === true || row[14] === 'TRUE') continue;
+
+      var dateVal = '';
+      try { if (row[0]) dateVal = Utilities.formatDate(new Date(row[0]), Session.getScriptTimeZone(), 'yyyy/MM/dd'); } catch(e) { dateVal = String(row[0] || ''); }
 
       result.push({
         row:            i + 1,
-        date:           row[0]  ? Utilities.formatDate(new Date(row[0]),  Session.getScriptTimeZone(), 'yyyy/MM/dd') : '',
+        date:           dateVal,
         building:       String(row[1]  || ''),
         unit:           String(row[2]  || ''),
         tenant:         String(row[3]  || ''),
@@ -56,7 +71,7 @@ function getMaintenanceList() {
         status:         String(row[10] || ''),
         notes:          String(row[11] || ''),
         createdBy:      String(row[12] || ''),
-        createdAt:      row[13] ? Utilities.formatDate(new Date(row[13]), Session.getScriptTimeZone(), 'yyyy/MM/dd') : ''
+        createdAt:      String(row[13] || '')
       });
     }
     return result;
@@ -67,9 +82,9 @@ function getMaintenanceList() {
 
 function addMaintenance(data) {
   try {
-    var sheet   = ensureMaintenanceSheet_();
-    var session = getSession_();
-    var now     = new Date();
+    var sheet    = ensureMaintenanceSheet_();
+    var username = getMaintUsername_();
+    var now      = new Date();
 
     sheet.appendRow([
       data.date        || Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy/MM/dd'),
@@ -84,12 +99,12 @@ function addMaintenance(data) {
       Number(data.actualCost) || 0,
       data.status      || 'جديد',
       data.notes       || '',
-      session ? session.username : 'نظام',
-      now,
+      username,
+      Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy/MM/dd'),
       false
     ]);
 
-    logActivity_('إضافة', 'صيانة', (data.building || '') + ' - ' + (data.description || '').substring(0, 50));
+    safeLogActivity_('إضافة', 'صيانة', (data.building || '') + ' - ' + String(data.description || '').substring(0, 50));
     return { success: true, message: 'تم إضافة طلب الصيانة' };
   } catch (e) {
     return { error: e.message };
@@ -117,7 +132,7 @@ function updateMaintenance(rowNum, data) {
       data.notes       || ''
     ]]);
 
-    logActivity_('تعديل', 'صيانة', (data.building || '') + ' - ' + (data.description || '').substring(0, 50));
+    safeLogActivity_('تعديل', 'صيانة', (data.building || '') + ' - ' + String(data.description || '').substring(0, 50));
     return { success: true, message: 'تم تحديث طلب الصيانة' };
   } catch (e) {
     return { error: e.message };
@@ -130,10 +145,9 @@ function deleteMaintenance(rowNum) {
     var maxRow = sheet.getLastRow();
     if (rowNum < 2 || rowNum > maxRow) return { error: 'رقم الصف غير صحيح' };
 
-    // حذف ناعم: ضع TRUE في عمود O (العمود 15)
     sheet.getRange(rowNum, 15).setValue(true);
 
-    logActivity_('حذف', 'صيانة', 'طلب صيانة صف ' + rowNum);
+    safeLogActivity_('حذف', 'صيانة', 'طلب صيانة صف ' + rowNum);
     return { success: true, message: 'تم حذف طلب الصيانة' };
   } catch (e) {
     return { error: e.message };
