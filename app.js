@@ -37,7 +37,11 @@ const ALL_PERMS = [
   { key:'reports.export',    label:'تصدير البيانات' },
   { key:'users.manage',      label:'إدارة المستخدمين' },
   { key:'backup.run',        label:'النسخ الاحتياطي' },
-  { key:'activity.view',     label:'سجل العمليات' }
+  { key:'activity.view',     label:'سجل العمليات' },
+  { key:'maintenance.view',  label:'عرض الصيانة' },
+  { key:'maintenance.add',   label:'إضافة طلب صيانة' },
+  { key:'maintenance.edit',  label:'تعديل طلب صيانة' },
+  { key:'maintenance.delete',label:'حذف طلب صيانة' }
 ];
 
 // صلاحيات الدور الافتراضية
@@ -45,10 +49,12 @@ const ROLE_DEFAULT_PERMS = {
   admin:    ALL_PERMS.map(p => p.key),
   manager:  ['contracts.view','contracts.add','contracts.edit','contracts.delete',
              'buildings.view','buildings.add','buildings.edit',
-             'tenants.view','payments.add','finance.view','sms.send','ai.use','alerts.view','log.view','reports.export'],
+             'tenants.view','payments.add','finance.view','sms.send','ai.use','alerts.view','log.view','reports.export',
+             'maintenance.view','maintenance.add','maintenance.edit','maintenance.delete'],
   employee: ['contracts.view','contracts.add','contracts.edit',
-             'buildings.view','tenants.view','payments.add','sms.send','ai.use','alerts.view'],
-  viewer:   ['contracts.view','buildings.view','tenants.view','finance.view']
+             'buildings.view','tenants.view','payments.add','sms.send','ai.use','alerts.view',
+             'maintenance.view','maintenance.add','maintenance.edit'],
+  viewer:   ['contracts.view','buildings.view','tenants.view','finance.view','maintenance.view']
 };
 
 function loadRolePerms() {
@@ -94,6 +100,9 @@ function expandPermsClient_(perms) {
     addPermClient_(out, 'tenants.view');
   }
   if (out.includes('users.manage')) addPermClient_(out, 'activity.view');
+  if (out.includes('maintenance.add') || out.includes('maintenance.edit') || out.includes('maintenance.delete')) {
+    addPermClient_(out, 'maintenance.view');
+  }
   return out;
 }
 
@@ -132,7 +141,8 @@ const PAGE_PERMS = {
   'users':      'users.manage',
   'activity':   'activity.view',
   'backup':     'backup.run',
-  'log':        'log.view'          // يظهر فقط لمن لديه صلاحية سجل الرسائل
+  'log':        'log.view',         // يظهر فقط لمن لديه صلاحية سجل الرسائل
+  'maintenance':'maintenance.view'  // قسم الصيانة
 };
 
 // تحقق هل للمستخدم الحالي صلاحية معينة
@@ -167,7 +177,11 @@ function hasPerm(perm) {
     'log.view':         [],
     'users.manage':     ['users','admin'],
     'backup.run':       ['backup','admin'],
-    'activity.view':    ['admin']
+    'activity.view':    ['admin'],
+    'maintenance.view': [],
+    'maintenance.add':  ['write'],
+    'maintenance.edit': ['write'],
+    'maintenance.delete': ['delete']
   };
   var legacy = legacyMap[perm] || [];
   for (var j = 0; j < legacy.length; j++) if (perms.indexOf(legacy[j]) >= 0) return true;
@@ -176,7 +190,7 @@ function hasPerm(perm) {
 
 // ── State
 // ── State ─────────────────────────────────────
-let S = { contracts:[], buildings:[], tenants:[], stats:null, loaded:false };
+let S = { contracts:[], buildings:[], tenants:[], maintenanceList:[], stats:null, loaded:false };
 
 // ── Init ──────────────────────────────────────
 document.getElementById('topDate').textContent = new Date().toLocaleDateString('ar-SA',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
@@ -278,8 +292,9 @@ function nav(name, el) {
   if (name === 'sms')      { loadSmsTemplates(); loadAutoSmsSettingsUI(); }
   if (name === 'users')    loadUsers();
   if (name === 'activity') { loadActivity(); if (hasPerm('users.manage')) { populateAdminArchiveBuildingSelect(); } }
-  if (name === 'backup')   loadBackup();
-  if (name === 'log')      loadLog();
+  if (name === 'backup')      loadBackup();
+  if (name === 'log')         loadLog();
+  if (name === 'maintenance') loadMaintenance();
 }
 
 // ── Dashboard ─────────────────────────────────
@@ -389,8 +404,14 @@ function loadBuildingMap() {
 function renderBuildingMap(data) {
   document.getElementById('mapTitle').textContent = `🏢 ${data.buildingName} — ${data.units.length} وحدة`;
 
-  const occ = data.units.filter(u=>u.status==='مشغولة').length;
-  const exp = data.units.filter(u=>u.status==='تشارف انتهاء').length;
+  const occ = data.units.filter(
+  u => u.status === 'مشغولة'
+).length;
+
+const exp = data.units.filter(
+  u => u.status === 'تشارف انتهاء' ||
+       u.status === 'شارف على الانتهاء'
+).length;
   const vac = data.units.filter(u=>u.status==='فارغة').length;
 
   const statsEl = document.getElementById('mapStats');
@@ -403,8 +424,9 @@ function renderBuildingMap(data) {
 
   const grid = document.getElementById('bMapGrid'); grid.innerHTML='';
   data.units.forEach(u => {
-    const cls = u.status==='مشغولة'?'unit-occ':u.status==='تشارف انتهاء'?'unit-exp':'unit-vac';
-    const lbl = u.status==='مشغولة'?'مشغولة':u.status==='تشارف انتهاء'?'قريب انتهاء':'فارغة';
+    const _isExp=u.status==='شارف على الانتهاء'||u.status==='تشارف انتهاء';
+    const cls = u.status==='مشغولة'?'unit-occ':_isExp?'unit-exp':'unit-vac';
+    const lbl = u.status==='مشغولة'?'مشغولة':_isExp?'قريب انتهاء':'فارغة';
     grid.innerHTML+=`<div class="unit-cell ${cls}" onclick="showUnitDetail('${esc(u.unit)}','${esc(data.buildingName)}')">
       <div class="unit-num">${u.unit}</div>
       <div class="unit-lbl">${lbl}</div>
@@ -597,7 +619,11 @@ function renderBuildingsTable() {
     if (!c.building) return;
     if (!stats[c.building]) stats[c.building] = { occupied: new Set(), allUnits: new Set() };
     if (c.unit) stats[c.building].allUnits.add(String(c.unit));
-    if (c.status === 'ساري' || c.status === 'شارف على الانتهاء') {
+    if (
+    c.status === 'ساري' ||
+    c.status === 'شارف على الانتهاء' ||
+    c.status === 'تشارف انتهاء'
+) {
       if (c.unit) stats[c.building].occupied.add(String(c.unit));
     }
   });
@@ -684,6 +710,9 @@ function saveContract() {
   if(!data.tenant){toast('اسم المستأجر مطلوب','err');return;}
   if(!data.building){toast('اختر المبنى','err');return;}
   if(!data.unit){toast('رقم الوحدة مطلوب','err');return;}
+  if(!data.start){toast('تاريخ بداية العقد مطلوب','err');return;}
+  if(!data.end){toast('تاريخ انتهاء العقد مطلوب','err');return;}
+  if(data.start && data.end && data.end < data.start){toast('تاريخ الانتهاء يجب أن يكون بعد تاريخ البداية','err');return;}
   const phoneErr=validateSaudiPhone_(data.phone);
   if(phoneErr){toast(phoneErr,'err');return;}
   const btn=document.getElementById('cSaveBtn');
@@ -732,8 +761,10 @@ function openPaymentModal(row,name,rent,paid) {
   document.getElementById('payRow').value=row;
   document.getElementById('payAmount').value='';
   document.getElementById('payResult').innerHTML='';
+  const remaining=Math.max(0,Number(rent||0)-Number(paid||0));
+  document.getElementById('payAmount').dataset.maxAmount=remaining;
   const h = document.getElementById('payHistory'); if (h) h.innerHTML = '<div style="padding:8px;color:#718096">جارٍ التحميل...</div>';
-  document.getElementById('payInfo').innerHTML=`<strong>${escHtml(name)}</strong><br>الإيجار: ${nf(rent)} ر.س &nbsp;|&nbsp; مدفوع: <span style="color:var(--green)">${nf(paid)} ر.س</span> &nbsp;|&nbsp; متبقي: <span style="color:var(--red)">${nf(rent-paid)} ر.س</span>`;
+  document.getElementById('payInfo').innerHTML=`<strong>${escHtml(name)}</strong><br>الإيجار: ${nf(rent)} ر.س &nbsp;|&nbsp; مدفوع: <span style="color:var(--green)">${nf(paid)} ر.س</span> &nbsp;|&nbsp; متبقي: <span style="color:var(--red)">${nf(remaining)} ر.س</span>`;
   openModal('paymentModal');
   loadContractPaymentHistory(row);
 }
@@ -741,8 +772,11 @@ function openPaymentModal(row,name,rent,paid) {
 function savePayment() {
   if (!hasPerm('payments.add')) { toast('ليس لديك الصلاحية المطلوبة', 'err'); return; }
   const row=parseInt(document.getElementById('payRow').value);
-  const amt=parseFloat(document.getElementById('payAmount').value);
-  if(!amt||amt<=0){toast('أدخل مبلغاً صحيحاً','err');return;}
+  const amtInput=document.getElementById('payAmount');
+  const amt=parseFloat(amtInput.value);
+  const maxAmt=parseFloat(amtInput.dataset.maxAmount||'0');
+  if(!amt||amt<=0||isNaN(amt)){toast('أدخل مبلغاً صحيحاً','err');return;}
+  if(maxAmt>0&&amt>maxAmt){toast(`المبلغ المدخل (${nf(amt)} ر.س) يتجاوز المتبقي (${nf(maxAmt)} ر.س)`,'err');return;}
   google.script.run
     .withSuccessHandler(r=>{
       if(r.error){toast('❌ '+r.error,'err');return;}
@@ -1001,7 +1035,8 @@ function sendSmsAction(){
   else if(target==='nopay') google.script.run.withSuccessHandler(cb).withFailureHandler(fail).sendPaymentReminders(false);
   else if(target==='building'){
     const bldg=document.getElementById('smsBldg').value;
-    google.script.run.withSuccessHandler(cb).withFailureHandler(fail).sendToBuildingCustom(bldg,msg,'ساري');
+    if(!bldg){toast('اختر المبنى أولاً','err');btn.disabled=false;btn.textContent='📤 إرسال';return;}
+    google.script.run.withSuccessHandler(cb).withFailureHandler(fail).sendToBuildingActiveCustom(bldg,msg);
   }
 }
 
@@ -1384,6 +1419,13 @@ function showLoginScreen() {
 function showMainUI() {
   document.getElementById('loginOverlay').style.display = 'none';
 
+  // ── المدير العام يملك كل الصلاحيات دائماً بصرف النظر عن الجلسة المخزنة ──
+  if (_currentUser && _currentUser.role === 'admin') {
+    var _perms = _currentUser.perms || [];
+    if (_perms.indexOf('admin') < 0) _perms = _perms.concat(['admin']);
+    _currentUser.perms = _perms;
+  }
+
   // ── شريط المستخدم ──────────────────────────────
   const bar = document.getElementById('userBar');
   if (bar) {
@@ -1496,15 +1538,9 @@ function resetClientStateAfterLogout() {
 
 function doLogout() {
   if (!confirm('هل تريد تسجيل الخروج؟')) return;
-  google.script.run
-    .withSuccessHandler(() => {
-      resetClientStateAfterLogout();
-    })
-    .withFailureHandler(() => {
-      // حتى لو فشل طلب الخادم، لا نترك المستخدم أمام شاشة بيضاء.
-      resetClientStateAfterLogout();
-    })
-    .logout();
+  // أخفِ الواجهة فوراً ثم أرسل طلب الخروج في الخلفية
+  resetClientStateAfterLogout();
+  google.script.run.withSuccessHandler(()=>{}).withFailureHandler(()=>{}).logout();
 }
 
 // ═══════════════════════════════════════════════
@@ -1620,14 +1656,20 @@ function saveUser() {
   if (!row && !data.password) { out.innerHTML = '<div class="result err">كلمة المرور مطلوبة للمستخدم الجديد</div>'; return; }
 
   const handler = r => {
-    if (r.error) { out.innerHTML = '<div class="result err">' + r.error + '</div>'; return; }
-    out.innerHTML = '<div class="result">✅ ' + (r.message || 'تم') + '</div>';
+    // إذا انتهت الجلسة أثناء الحفظ، أعِد التحقق منها بدل التوقف
+    if (r && r.error && String(r.error).indexOf('الجلسة') >= 0) {
+      out.innerHTML = '<div class="result err">⚠️ انتهت الجلسة — جارٍ التحقق مجدداً...</div>';
+      setTimeout(() => { closeModal('userModal'); checkSession(); }, 1500);
+      return;
+    }
+    if (r && r.error) { out.innerHTML = '<div class="result err">' + r.error + '</div>'; return; }
+    out.innerHTML = '<div class="result">✅ ' + (r && r.message || 'تم الحفظ') + '</div>';
     setTimeout(() => { closeModal('userModal'); loadUsers(); }, 1200);
   };
   if (row > 0) {
-    google.script.run.withSuccessHandler(handler).updateUser(row, data);
+    google.script.run.withSuccessHandler(handler).withFailureHandler(e => { out.innerHTML = '<div class="result err">' + e.message + '</div>'; }).updateUser(row, data);
   } else {
-    google.script.run.withSuccessHandler(handler).addUser(data);
+    google.script.run.withSuccessHandler(handler).withFailureHandler(e => { out.innerHTML = '<div class="result err">' + e.message + '</div>'; }).addUser(data);
   }
 }
 
@@ -1814,9 +1856,13 @@ document.querySelectorAll('.modal-overlay').forEach(el=>{
 // ── Populate selects ──────────────────────────
 function populateAllSelects(){
   if(!S.stats) return;
-  const buildings=Object.keys(S.stats.byBuilding);
-  ['fBldg','mBldg','smsBldg'].forEach(id=>{
+  const statsBuildings=Object.keys(S.stats.byBuilding);
+  // smsBldg يستخدم قائمة المباني الكاملة حتى يشمل المباني بدون عقود
+  const allBuildings=(S.buildings||[]).map(b=>b.name);
+  const buildingsBySelect={smsBldg:allBuildings.length?allBuildings:statsBuildings};
+  ['fBldg','mBldg','smsBldg','mntBldgFilter'].forEach(id=>{
     const sel=document.getElementById(id); if(!sel) return;
+    const buildings=buildingsBySelect[id]||statsBuildings;
     const cur=sel.value; while(sel.options.length>1) sel.remove(1);
     buildings.forEach(b=>{ const o=document.createElement('option'); o.value=o.text=b; sel.add(o); });
     if(cur) sel.value=cur;
@@ -1849,7 +1895,7 @@ function appendMsg(kind, text, isErr){
 }
 
 function statusBadge(s){
-  const m={'ساري':'b-green','شارف على الانتهاء':'b-amber','منتهي':'b-gray'};
+  const m={'ساري':'b-green','شارف على الانتهاء':'b-amber','تشارف انتهاء':'b-amber','منتهي':'b-gray'};
   return `<span class="badge ${m[s]||'b-gray'}">${s||'—'}</span>`;
 }
 function toast(msg,type=''){
@@ -1857,3 +1903,233 @@ function toast(msg,type=''){
   el.textContent=msg; el.style.background=type==='err'?'#9B1C1C':'#1A3A5C';
   el.classList.add('show'); clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('show'),3000);
 }
+
+// ═══════════════════════════════════════════════
+// قسم الصيانة
+// ═══════════════════════════════════════════════
+
+function loadMaintenance() {
+  const tbody = document.getElementById('maintenanceBody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:20px;color:#718096">جارٍ التحميل...</td></tr>';
+  google.script.run
+    .withSuccessHandler(renderMaintenance)
+    .withFailureHandler(e => toast('خطأ تحميل الصيانة: ' + e.message, 'err'))
+    .getMaintenanceList();
+}
+
+function renderMaintenance(data) {
+  S.maintenanceList = data || [];
+  _applyMaintenanceFilters();
+}
+
+function _applyMaintenanceFilters() {
+  const list = S.maintenanceList || [];
+  const fBldg   = (document.getElementById('mntBldgFilter')    || {}).value || '';
+  const fStatus  = (document.getElementById('mntStatusFilter') || {}).value || '';
+  const fCat     = (document.getElementById('mntCatFilter')    || {}).value || '';
+  const fPri     = (document.getElementById('mntPriFilter')    || {}).value || '';
+
+  let filtered = list;
+  if (fBldg)   filtered = filtered.filter(r => r.building  === fBldg);
+  if (fStatus) filtered = filtered.filter(r => r.status    === fStatus);
+  if (fCat)    filtered = filtered.filter(r => r.category  === fCat);
+  if (fPri)    filtered = filtered.filter(r => r.priority  === fPri);
+
+  const set = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
+  set('mnt-total',  list.length);
+  set('mnt-open',   list.filter(r => r.status === 'جديد').length);
+  set('mnt-inprog', list.filter(r => r.status === 'قيد التنفيذ').length);
+  set('mnt-done',   list.filter(r => r.status === 'مكتمل').length);
+
+  const tbody = document.getElementById('maintenanceBody');
+  if (!tbody) return;
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:20px;color:#718096">لا توجد طلبات صيانة</td></tr>';
+    return;
+  }
+
+  const priCls    = { 'طارئ':'b-red', 'عاجل':'b-amber', 'عادي':'b-blue' };
+  const statusCls = { 'جديد':'b-blue', 'قيد التنفيذ':'b-amber', 'مكتمل':'b-green', 'ملغي':'b-gray' };
+
+  tbody.innerHTML = filtered.map(r => `<tr>
+    <td style="font-size:11px;color:#718096;white-space:nowrap">${r.date || '—'}</td>
+    <td>${r.building || '—'}</td>
+    <td style="text-align:center">${r.unit || '—'}</td>
+    <td style="font-size:12px">${r.tenant || '—'}</td>
+    <td><span class="badge b-navy" style="font-size:11px">${r.category || '—'}</span></td>
+    <td><span class="badge ${priCls[r.priority] || 'b-gray'}" style="font-size:11px">${r.priority || '—'}</span></td>
+    <td style="font-size:12px;max-width:200px;word-break:break-word">${escHtml(r.description || '—')}</td>
+    <td style="font-size:12px">${r.contractor || '—'}</td>
+    <td style="font-size:12px">${r.actualCost ? nf(r.actualCost) + ' ر.س' : '—'}</td>
+    <td><span class="badge ${statusCls[r.status] || 'b-gray'}">${r.status || '—'}</span></td>
+    <td><div style="display:flex;gap:4px">
+      ${hasPerm('maintenance.edit')   ? `<button class="btn btn-sm btn-primary" onclick="openMaintenanceModal('edit',${r.row})">تعديل</button>` : ''}
+      ${hasPerm('maintenance.delete') ? `<button class="btn btn-sm btn-danger"  onclick="confirmDeleteMaintenance(${r.row})">حذف</button>` : ''}
+    </div></td>
+  </tr>`).join('');
+}
+
+function openMaintenanceModal(mode, rowNum) {
+  if (!hasPerm(mode === 'edit' ? 'maintenance.edit' : 'maintenance.add')) {
+    toast('ليس لديك الصلاحية المطلوبة', 'err'); return;
+  }
+  document.getElementById('mntModalTitle').textContent = mode === 'add' ? '🔧 إضافة طلب صيانة' : '✏️ تعديل طلب صيانة';
+  document.getElementById('mntEditRow').value    = rowNum || '';
+  document.getElementById('mntModalResult').innerHTML = '';
+
+  ['mnt-unit','mnt-tenant','mnt-contractor','mnt-contractor-phone','mnt-actual-cost','mnt-description','mnt-notes'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+
+  const bsel = document.getElementById('mnt-building');
+  bsel.innerHTML = '<option value="">اختر مبنى...</option>';
+  S.buildings.forEach(b => { const o = document.createElement('option'); o.value = o.text = b.name; bsel.add(o); });
+
+  document.getElementById('mnt-category').value = 'أخرى';
+  document.getElementById('mnt-priority').value  = 'عادي';
+  document.getElementById('mnt-status').value    = 'جديد';
+  document.getElementById('mnt-date').value      = new Date().toISOString().split('T')[0];
+
+  if (mode === 'edit' && rowNum) {
+    const r = (S.maintenanceList || []).find(x => x.row === rowNum);
+    if (r) {
+      document.getElementById('mnt-building').value          = r.building        || '';
+      document.getElementById('mnt-unit').value              = r.unit            || '';
+      document.getElementById('mnt-tenant').value            = r.tenant          || '';
+      document.getElementById('mnt-category').value          = r.category        || 'أخرى';
+      document.getElementById('mnt-priority').value          = r.priority        || 'عادي';
+      document.getElementById('mnt-description').value       = r.description     || '';
+      document.getElementById('mnt-contractor').value        = r.contractor      || '';
+      document.getElementById('mnt-contractor-phone').value  = r.contractorPhone || '';
+      document.getElementById('mnt-actual-cost').value       = r.actualCost      || '';
+      document.getElementById('mnt-status').value            = r.status          || 'جديد';
+      document.getElementById('mnt-notes').value             = r.notes           || '';
+      if (r.date) document.getElementById('mnt-date').value  = r.date.replace(/\//g, '-');
+    }
+  }
+  openModal('maintenanceModal');
+}
+
+function autoFillMaintenanceTenant() {
+  const building = document.getElementById('mnt-building').value;
+  const unit     = document.getElementById('mnt-unit').value.trim();
+  if (!building || !unit) return;
+  const contract = (S.contracts || []).find(c =>
+    c.building === building && String(c.unit) === String(unit) &&
+    (c.status === 'ساري' || c.status === 'شارف على الانتهاء' || c.status === 'تشارف انتهاء')
+  );
+  if (contract) document.getElementById('mnt-tenant').value = contract.tenant || '';
+}
+
+function saveMaintenance() {
+  const rowNum = document.getElementById('mntEditRow').value;
+  if (!hasPerm(rowNum ? 'maintenance.edit' : 'maintenance.add')) {
+    toast('ليس لديك الصلاحية المطلوبة', 'err'); return;
+  }
+  const data = {
+    date:            document.getElementById('mnt-date').value.replace(/-/g, '/'),
+    building:        document.getElementById('mnt-building').value,
+    unit:            document.getElementById('mnt-unit').value.trim(),
+    tenant:          document.getElementById('mnt-tenant').value.trim(),
+    category:        document.getElementById('mnt-category').value,
+    priority:        document.getElementById('mnt-priority').value,
+    description:     document.getElementById('mnt-description').value.trim(),
+    contractor:      document.getElementById('mnt-contractor').value.trim(),
+    contractorPhone: document.getElementById('mnt-contractor-phone').value.trim(),
+    actualCost:      document.getElementById('mnt-actual-cost').value,
+    status:          document.getElementById('mnt-status').value,
+    notes:           document.getElementById('mnt-notes').value.trim()
+  };
+  const out = document.getElementById('mntModalResult');
+  if (!data.building)    { out.innerHTML = '<div class="result err">المبنى مطلوب</div>'; return; }
+  if (!data.description) { out.innerHTML = '<div class="result err">وصف المشكلة مطلوب</div>'; return; }
+
+  const btn = document.getElementById('mntSaveBtn');
+  btn.disabled = true;
+  const cb = r => {
+    btn.disabled = false;
+    if (r && r.error) { out.innerHTML = '<div class="result err">' + escHtml(r.error) + '</div>'; return; }
+    out.innerHTML = '<div class="result">✅ تم الحفظ بنجاح</div>';
+    setTimeout(() => { closeModal('maintenanceModal'); loadMaintenance(); }, 900);
+  };
+  const fail = e => { btn.disabled = false; toast('خطأ: ' + e.message, 'err'); };
+  if (rowNum) {
+    google.script.run.withSuccessHandler(cb).withFailureHandler(fail).updateMaintenance(parseInt(rowNum), data);
+  } else {
+    google.script.run.withSuccessHandler(cb).withFailureHandler(fail).addMaintenance(data);
+  }
+}
+
+function confirmDeleteMaintenance(row) {
+  if (!confirm('هل تريد حذف طلب الصيانة هذا؟')) return;
+  google.script.run
+    .withSuccessHandler(r => {
+      if (r && r.error) { toast('خطأ: ' + r.error, 'err'); return; }
+      toast('✅ تم الحذف'); loadMaintenance();
+    })
+    .withFailureHandler(e => toast('خطأ: ' + e.message, 'err'))
+    .deleteMaintenance(row);
+}
+// =====================================================
+// PATCH FIXED
+// تحسين سرعة الدخول مع كاش متوافق مع نظام S
+// =====================================================
+
+(function () {
+
+  const CACHE_KEY = "amlak_cache_v2";
+
+  const originalApply = window.applyAllData_;
+  const originalLoadData = window.loadData;
+
+  if (typeof originalApply === "function") {
+
+    window.applyAllData_ = function (data) {
+
+      try {
+        localStorage.setItem(
+          CACHE_KEY,
+          JSON.stringify({
+            time: Date.now(),
+            data: data
+          })
+        );
+      } catch (e) {}
+
+      return originalApply(data);
+    };
+
+  }
+
+  const CACHE_MAX_AGE_MS = 30 * 60 * 1000; // 30 دقيقة
+
+  window.loadData = function () {
+
+    try {
+
+      const cached = localStorage.getItem(CACHE_KEY);
+
+      if (cached) {
+
+        const obj = JSON.parse(cached);
+        const age = Date.now() - (obj.time || 0);
+
+        if (obj && obj.data && age < CACHE_MAX_AGE_MS) {
+
+          console.log("Using cached data (age: " + Math.round(age/1000) + "s)");
+
+          originalApply(obj.data);
+        } else if (age >= CACHE_MAX_AGE_MS) {
+          localStorage.removeItem(CACHE_KEY);
+          console.log("Cache expired, fetching fresh data");
+        }
+      }
+
+    } catch (e) {
+      console.log(e);
+    }
+
+    return originalLoadData();
+  };
+
+})();

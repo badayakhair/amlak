@@ -31,6 +31,7 @@
   <div class="tab admin-only" onclick="nav('activity',this)" style="display:none">📋 سجل العمليات</div>
   <div class="tab admin-only" onclick="nav('backup',this)" style="display:none">💾 النسخ الاحتياطي</div>
   <div class="tab" onclick="nav('log',this)">📜 السجل</div>
+  <div class="tab" onclick="nav('maintenance',this)">🔧 الصيانة</div>
 </div>
 
 <div class="content">
@@ -573,6 +574,52 @@
   </div>
 </div>
 
+
+<!-- ═══ الصيانة ═══ -->
+<div id="page-maintenance" class="page">
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+    <button data-perm="maintenance.add" class="btn btn-success" onclick="openMaintenanceModal('add')">🔧 إضافة طلب صيانة</button>
+    <button class="btn" onclick="loadMaintenance()">🔄 تحديث</button>
+  </div>
+
+  <div class="metrics" style="margin-bottom:12px">
+    <div class="metric m-blue"><div class="metric-label">إجمالي الطلبات</div><div class="metric-value" id="mnt-total">—</div></div>
+    <div class="metric m-amber"><div class="metric-label">جديدة</div><div class="metric-value" id="mnt-open">—</div></div>
+    <div class="metric m-red"><div class="metric-label">قيد التنفيذ</div><div class="metric-value" id="mnt-inprog">—</div></div>
+    <div class="metric m-green"><div class="metric-label">مكتملة</div><div class="metric-value" id="mnt-done">—</div></div>
+  </div>
+
+  <div class="card" style="padding:12px">
+    <div class="search-row" style="margin-bottom:10px">
+      <select class="form-control" id="mntBldgFilter" onchange="_applyMaintenanceFilters()" style="max-width:160px">
+        <option value="">كل المباني</option>
+      </select>
+      <select class="form-control" id="mntStatusFilter" onchange="_applyMaintenanceFilters()" style="max-width:140px">
+        <option value="">كل الحالات</option>
+        <option>جديد</option><option>قيد التنفيذ</option><option>مكتمل</option><option>ملغي</option>
+      </select>
+      <select class="form-control" id="mntCatFilter" onchange="_applyMaintenanceFilters()" style="max-width:140px">
+        <option value="">كل الفئات</option>
+        <option>كهرباء</option><option>سباكة</option><option>نجارة</option><option>تكييف</option><option>دهانات</option><option>أخرى</option>
+      </select>
+      <select class="form-control" id="mntPriFilter" onchange="_applyMaintenanceFilters()" style="max-width:130px">
+        <option value="">كل الأولويات</option>
+        <option>طارئ</option><option>عاجل</option><option>عادي</option>
+      </select>
+    </div>
+    <div class="tbl-wrap">
+      <table><thead><tr>
+        <th>التاريخ</th><th>المبنى</th><th>الوحدة</th><th>المستأجر</th>
+        <th>الفئة</th><th>الأولوية</th><th>وصف المشكلة</th>
+        <th>المسؤول</th><th>التكلفة</th><th>الحالة</th><th>إجراء</th>
+      </tr></thead>
+      <tbody id="maintenanceBody">
+        <tr><td colspan="11" style="text-align:center;padding:20px;color:#718096">انتقل للقسم لتحميل البيانات</td></tr>
+      </tbody></table>
+    </div>
+  </div>
+</div>
+
 </div><!-- /content -->
 
 <!-- Modal عقد -->
@@ -692,9 +739,9 @@
 
 <div id="toast"></div>
 
-<script src="config.js?v=4"></script>
-<script src="api.js?v=4"></script>
-<script src="app.js?v=4"></script>
+<script src="config.js?v=7"></script>
+<script src="api.js?v=7"></script>
+<script src="app.js?v=7"></script>
 
 
 <!-- Modal تغيير كلمة المرور -->
@@ -805,6 +852,52 @@
   </div>
 </div>
 
+<!-- Modal صيانة -->
+<div id="maintenanceModal" class="modal-overlay">
+  <div class="modal-box" style="max-width:620px">
+    <div class="modal-hdr" style="background:#744210"><span id="mntModalTitle">🔧 إضافة طلب صيانة</span><button class="modal-close" onclick="closeModal('maintenanceModal')">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="mntEditRow">
+      <div class="form-grid">
+        <div class="form-group"><div class="form-label">التاريخ</div><input class="form-control" id="mnt-date" type="date"></div>
+        <div class="form-group"><div class="form-label">المبنى *</div>
+          <select class="form-control" id="mnt-building" onchange="autoFillMaintenanceTenant()"><option value="">اختر مبنى...</option></select></div>
+        <div class="form-group"><div class="form-label">رقم الوحدة</div>
+          <input class="form-control" id="mnt-unit" placeholder="مثال: 5 أو محل 3" oninput="autoFillMaintenanceTenant()"></div>
+        <div class="form-group"><div class="form-label">المستأجر</div>
+          <input class="form-control" id="mnt-tenant" placeholder="يملأ تلقائياً أو أدخل يدوياً"></div>
+        <div class="form-group"><div class="form-label">الفئة</div>
+          <select class="form-control" id="mnt-category">
+            <option>كهرباء</option><option>سباكة</option><option>نجارة</option>
+            <option>تكييف</option><option>دهانات</option><option>أخرى</option>
+          </select></div>
+        <div class="form-group"><div class="form-label">الأولوية</div>
+          <select class="form-control" id="mnt-priority">
+            <option>عادي</option><option>عاجل</option><option>طارئ</option>
+          </select></div>
+        <div class="form-group"><div class="form-label">الحالة</div>
+          <select class="form-control" id="mnt-status">
+            <option>جديد</option><option>قيد التنفيذ</option><option>مكتمل</option><option>ملغي</option>
+          </select></div>
+        <div class="form-group"><div class="form-label">المسؤول / المقاول</div>
+          <input class="form-control" id="mnt-contractor" placeholder="اسم المقاول أو المسؤول"></div>
+        <div class="form-group"><div class="form-label">جوال المقاول</div>
+          <input class="form-control" id="mnt-contractor-phone" placeholder="05xxxxxxxx"></div>
+        <div class="form-group"><div class="form-label">التكلفة الفعلية (ر.س)</div>
+          <input class="form-control" id="mnt-actual-cost" type="number" min="0" placeholder="0"></div>
+      </div>
+      <div class="form-group"><div class="form-label">وصف المشكلة *</div>
+        <textarea class="form-control" id="mnt-description" placeholder="اوصف المشكلة بالتفصيل..." style="min-height:70px"></textarea></div>
+      <div class="form-group"><div class="form-label">ملاحظات</div>
+        <textarea class="form-control" id="mnt-notes" style="min-height:50px" placeholder="أي معلومات إضافية..."></textarea></div>
+      <div id="mntModalResult"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('maintenanceModal')">إلغاء</button>
+      <button class="btn btn-success" id="mntSaveBtn" onclick="saveMaintenance()">💾 حفظ</button>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>

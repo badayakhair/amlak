@@ -1,7 +1,6 @@
 // ═══════════════════════════════════════════════════════════════
 // APIDispatcher.gs — JSONP bridge for the GitHub Pages frontend
 // أضف هذا الملف إلى مشروع Apps Script بجانب Code.gs
-// ملاحظة: إذا دمجت PR batch 1 أيضاً، ادمج ملفي APIDispatcher.gs في ملف واحد.
 // ═══════════════════════════════════════════════════════════════
 
 function handleApiJsonp_(e) {
@@ -33,6 +32,26 @@ function handleApiJsonp_(e) {
   return ContentService
     .createTextOutput(callback + '(' + JSON.stringify(out) + ');')
     .setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
+
+/**
+ * ترسل رسالة لجميع المستأجرين النشطين في مبنى معين (ساري + شارف على الانتهاء)
+ * تستدعي sendToBuildingCustom مرتين وتجمع النتائج
+ */
+function sendToBuildingActiveCustom(bldg, msg) {
+  var total = { sent: 0, failed: 0 };
+  var statuses = ['ساري', 'شارف على الانتهاء', 'تشارف انتهاء'];
+  if (typeof sendToBuildingCustom !== 'function') {
+    return { error: 'الدالة sendToBuildingCustom غير متوفرة' };
+  }
+  statuses.forEach(function(st) {
+    try {
+      var r = sendToBuildingCustom(bldg, msg, st) || {};
+      total.sent   += Number(r.sent   || 0);
+      total.failed += Number(r.failed || 0);
+    } catch(e) {}
+  });
+  return total;
 }
 
 function apiEnsureMaintenancePermissions_() {
@@ -141,6 +160,7 @@ function callPublicApi_(action, args, token) {
     sendExpiryReminders: 'sendExpiryReminders',
     sendPaymentReminders: 'sendPaymentReminders',
     sendToBuildingCustom: 'sendToBuildingCustom',
+    sendToBuildingActiveCustom: 'sendToBuildingActiveCustom',
     getMessageLog: 'getMessageLog',
 
     getActivityLog: 'getActivityLog',
@@ -169,7 +189,7 @@ function callPublicApi_(action, args, token) {
     throw new Error('API action غير مسموح أو غير موجود: ' + action);
   }
 
-  // ── التحقق من صحة بيانات المبنى على جانب الخادم ──
+  // ── التحقق من صحة بيانات المبنى على جانب الخادم (batch 2) ──
   if (action === 'addBuilding' || action === 'updateBuilding') {
     var buildingData = (action === 'updateBuilding') ? args[1] : args[0];
     if (typeof validateBuilding_ === 'function') {
@@ -178,12 +198,25 @@ function callPublicApi_(action, args, token) {
     }
   }
 
-  // ── التحقق من صحة رقم الجوال عند إضافة/تعديل عقد ──
+  // ── التحقق من صحة تواريخ العقد والجوال على جانب الخادم (batch 1 + 2) ──
   if (action === 'addContract' || action === 'updateContract') {
     var contractData = (action === 'updateContract') ? args[1] : args[0];
+    if (typeof validateContractDates_ === 'function') {
+      var dateErr = validateContractDates_(contractData || {});
+      if (dateErr) return dateErr;
+    }
     if (contractData && typeof validatePhone_ === 'function') {
       var phoneErr = validatePhone_((contractData || {}).phone);
       if (phoneErr) return phoneErr;
+    }
+  }
+
+  // ── التحقق من صحة مبلغ الدفعة على جانب الخادم (batch 1) ──
+  if (action === 'addPayment') {
+    var payAmount = args[1];
+    if (typeof validatePaymentAmount_ === 'function') {
+      var amtErr = validatePaymentAmount_(payAmount);
+      if (amtErr) return amtErr;
     }
   }
 
