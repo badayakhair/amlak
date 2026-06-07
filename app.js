@@ -591,7 +591,11 @@ function renderBuildingsTable() {
     if (!c.building) return;
     if (!stats[c.building]) stats[c.building] = { occupied: new Set(), allUnits: new Set() };
     if (c.unit) stats[c.building].allUnits.add(String(c.unit));
-    if (c.status === 'ساري' || c.status === 'شارف على الانتهاء') {
+    if (
+    c.status === 'ساري' ||
+    c.status === 'شارف على الانتهاء' ||
+    c.status === 'تشارف انتهاء'
+) {
       if (c.unit) stats[c.building].occupied.add(String(c.unit));
     }
   });
