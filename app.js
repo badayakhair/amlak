@@ -783,6 +783,28 @@ function savePayment() {
       if(r.error){toast('❌ '+r.error,'err');return;}
       document.getElementById('payResult').innerHTML=`<div class="result">✅ سُجّلت ${nf(amt)} ر.س | متبقي: ${nf(r.remaining)} ر.س</div>`;
       document.getElementById('payAmount').value='';
+      // تحديث فوري لبيانات S.contracts و S.tenants بدون انتظار silentRefresh
+      const c = S.contracts.find(x => x.row === row);
+      if (c) {
+        c.paid = (Number(c.paid) || 0) + amt;
+        const t = S.tenants.find(x => x.name === c.tenant);
+        if (t) t.totalPaid = (Number(t.totalPaid) || 0) + amt;
+        renderTenants();
+        renderContracts();
+      }
+      // تحديث إجمالي المدفوع/المتبقي/نسبة التحصيل في لوحة التحكم فوراً
+      if (S.stats && S.stats.financials) {
+        const ff = S.stats.financials;
+        ff.totalPaid = (Number(ff.totalPaid) || 0) + amt;
+        ff.remaining = Math.max(0, (Number(ff.remaining) || 0) - amt);
+        const baseRent = Number(ff.annualRent || ff.totalRent || 0);
+        if (baseRent > 0) ff.collectRate = Math.round(ff.totalPaid / baseRent * 100);
+        renderDashboard();
+      }
+      // تحديث قسم المالية إذا كان مفتوحاً
+      if (document.getElementById('page-finance') && document.getElementById('page-finance').classList.contains('active')) {
+        loadFinance();
+      }
       toast('✅ تم تسجيل الدفعة'); silentRefresh(); loadContractPaymentHistory(row);
     })
     .withFailureHandler(e=>toast('خطأ: '+e.message,'err'))
@@ -804,7 +826,7 @@ function loadContractPaymentHistory(row) {
       clearTimeout(uiTimer);
       rows = rows || [];
       if(!rows.length){ box.innerHTML = '<div style="padding:8px;color:#718096">لا توجد دفعات مسجلة لهذا العقد</div>'; return; }
-      box.innerHTML = `<div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>المستخدم</th><th>المبلغ</th><th>قبل</th><th>بعد</th><th>المتبقي</th><th>ملاحظات</th></tr></thead><tbody>${rows.map(p=>`<tr><td style="font-size:11px;white-space:nowrap">${escHtml(p.date)}</td><td>${escHtml(p.username)}</td><td style="font-weight:600;direction:ltr;text-align:left">${nf(p.amount)}</td><td>${nf(p.before)}</td><td>${nf(p.after)}</td><td>${nf(p.remaining)}</td><td style="font-size:12px">${escHtml(p.notes)||'—'}</td></tr>`).join('')}</tbody></table></div>`;
+      box.innerHTML = `<div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>المستخدم</th><th>المبلغ</th><th>متبقي قبل</th><th>متبقي بعد</th><th>ملاحظات</th></tr></thead><tbody>${rows.map(p=>{const remAfter=Number(p.remaining)||0;const remBefore=remAfter+Number(p.amount||0);return`<tr><td style="font-size:11px;white-space:nowrap">${escHtml(p.date)}</td><td>${escHtml(p.username)}</td><td style="font-weight:600;color:var(--green);direction:ltr;text-align:left">+${nf(p.amount)}</td><td style="color:var(--amber)">${nf(remBefore)}</td><td style="color:${remAfter>0?'var(--red)':'var(--green)'}">${nf(remAfter)}</td><td style="font-size:12px">${escHtml(p.notes)||'—'}</td></tr>`;}).join('')}</tbody></table></div>`;
     })
     .withFailureHandler(e=>{ clearTimeout(uiTimer); box.innerHTML = '<div class="result err">خطأ في تحميل سجل الدفعات: '+escHtml(e.message)+'</div>'; })
     .getContractPaymentHistory(row);
