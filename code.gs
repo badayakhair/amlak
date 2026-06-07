@@ -1,4 +1,42 @@
 // ═══════════════════════════════════════════════════════════════
+// Server-Side Validation Helpers — تحقق من صحة البيانات قبل الحفظ
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * يتحقق من صحة تواريخ العقد: البداية والنهاية
+ * يُعيد null إذا كان كل شيء صحيحاً، أو { error: '...' } عند وجود خطأ
+ */
+function validateContractDates_(data) {
+  data = data || {};
+  var start = String(data.start || '').trim();
+  var end   = String(data.end   || '').trim();
+
+  if (!start) return { error: 'تاريخ بداية العقد مطلوب' };
+  if (!end)   return { error: 'تاريخ انتهاء العقد مطلوب' };
+
+  var startNorm = start.replace(/\//g, '-');
+  var endNorm   = end.replace(/\//g, '-');
+  var startD    = new Date(startNorm);
+  var endD      = new Date(endNorm);
+
+  if (isNaN(startD.getTime())) return { error: 'تنسيق تاريخ البداية غير صحيح' };
+  if (isNaN(endD.getTime()))   return { error: 'تنسيق تاريخ الانتهاء غير صحيح' };
+  if (endD < startD)           return { error: 'تاريخ الانتهاء يجب أن يكون بعد تاريخ البداية' };
+
+  return null;
+}
+
+/**
+ * يتحقق من صحة مبلغ الدفعة: أكبر من صفر وغير NaN
+ * يُعيد null إذا كان صحيحاً، أو { error: '...' } عند وجود خطأ
+ */
+function validatePaymentAmount_(amount) {
+  var amt = Number(amount);
+  if (isNaN(amt) || amt <= 0) return { error: 'مبلغ الدفعة يجب أن يكون رقماً موجباً' };
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Maintenance Functions — أضف هذا الكود إلى code.gs في Google Apps Script
 // ═══════════════════════════════════════════════════════════════
 

@@ -34,6 +34,26 @@ function handleApiJsonp_(e) {
     .setMimeType(ContentService.MimeType.JAVASCRIPT);
 }
 
+/**
+ * ترسل رسالة لجميع المستأجرين النشطين في مبنى معين (ساري + شارف على الانتهاء)
+ * تستدعي sendToBuildingCustom مرتين وتجمع النتائج
+ */
+function sendToBuildingActiveCustom(bldg, msg) {
+  var total = { sent: 0, failed: 0 };
+  var statuses = ['ساري', 'شارف على الانتهاء', 'تشارف انتهاء'];
+  if (typeof sendToBuildingCustom !== 'function') {
+    return { error: 'الدالة sendToBuildingCustom غير متوفرة' };
+  }
+  statuses.forEach(function(st) {
+    try {
+      var r = sendToBuildingCustom(bldg, msg, st) || {};
+      total.sent   += Number(r.sent   || 0);
+      total.failed += Number(r.failed || 0);
+    } catch(e) {}
+  });
+  return total;
+}
+
 function apiEnsureMaintenancePermissions_() {
   try {
     if (typeof ensureMaintenancePermissions_ === 'function') ensureMaintenancePermissions_();
@@ -140,6 +160,7 @@ function callPublicApi_(action, args, token) {
     sendExpiryReminders: 'sendExpiryReminders',
     sendPaymentReminders: 'sendPaymentReminders',
     sendToBuildingCustom: 'sendToBuildingCustom',
+    sendToBuildingActiveCustom: 'sendToBuildingActiveCustom',
     getMessageLog: 'getMessageLog',
 
     getActivityLog: 'getActivityLog',
@@ -166,6 +187,24 @@ function callPublicApi_(action, args, token) {
   var root = typeof globalThis !== 'undefined' ? globalThis : this;
   if (!fnName || typeof root[fnName] !== 'function') {
     throw new Error('API action غير مسموح أو غير موجود: ' + action);
+  }
+
+  // ── التحقق من صحة تواريخ العقد على جانب الخادم ──
+  if (action === 'addContract' || action === 'updateContract') {
+    var contractData = (action === 'updateContract') ? args[1] : args[0];
+    if (typeof validateContractDates_ === 'function') {
+      var dateErr = validateContractDates_(contractData || {});
+      if (dateErr) return dateErr;
+    }
+  }
+
+  // ── التحقق من صحة مبلغ الدفعة على جانب الخادم ──
+  if (action === 'addPayment') {
+    var payAmount = args[1];
+    if (typeof validatePaymentAmount_ === 'function') {
+      var amtErr = validatePaymentAmount_(payAmount);
+      if (amtErr) return amtErr;
+    }
   }
 
   return root[fnName].apply(root, args || []);
