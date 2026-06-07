@@ -4,6 +4,45 @@
 
 var MAINTENANCE_SHEET = 'الصيانة';
 
+function addMaintenancePerm_(list, perm) {
+  if (list && list.indexOf(perm) < 0) list.push(perm);
+}
+
+function ensureMaintenancePermissions_() {
+  try {
+    if (typeof ROLES === 'undefined') return;
+
+    if (ROLES.admin && ROLES.admin.perms) {
+      addMaintenancePerm_(ROLES.admin.perms, 'maintenance.view');
+      addMaintenancePerm_(ROLES.admin.perms, 'maintenance.add');
+      addMaintenancePerm_(ROLES.admin.perms, 'maintenance.edit');
+      addMaintenancePerm_(ROLES.admin.perms, 'maintenance.delete');
+    }
+    if (ROLES.manager && ROLES.manager.perms) {
+      addMaintenancePerm_(ROLES.manager.perms, 'maintenance.view');
+      addMaintenancePerm_(ROLES.manager.perms, 'maintenance.add');
+      addMaintenancePerm_(ROLES.manager.perms, 'maintenance.edit');
+      addMaintenancePerm_(ROLES.manager.perms, 'maintenance.delete');
+    }
+    if (ROLES.employee && ROLES.employee.perms) {
+      addMaintenancePerm_(ROLES.employee.perms, 'maintenance.view');
+      addMaintenancePerm_(ROLES.employee.perms, 'maintenance.add');
+      addMaintenancePerm_(ROLES.employee.perms, 'maintenance.edit');
+    }
+    if (ROLES.viewer && ROLES.viewer.perms) {
+      addMaintenancePerm_(ROLES.viewer.perms, 'maintenance.view');
+    }
+  } catch (e) {}
+}
+
+function requireMaintenancePerm_(perm) {
+  ensureMaintenancePermissions_();
+  try {
+    if (typeof requirePerm_ === 'function') return requirePerm_(perm);
+  } catch (e) {}
+  return null;
+}
+
 // أعمدة ورقة الصيانة (تبدأ من العمود A)
 // A=التاريخ  B=المبنى  C=الوحدة  D=المستأجر  E=الفئة  F=الأولوية
 // G=وصف المشكلة  H=المسؤول/المقاول  I=جوال المقاول
@@ -20,7 +59,15 @@ function getMaintUsername_() {
 }
 
 function safeLogActivity_(action, entity, details) {
-  try { logActivity_(action, entity, details); } catch (e) {}
+  try {
+    if (typeof logActivity === 'function') {
+      logActivity(getMaintUsername_(), action, entity, details);
+      return;
+    }
+  } catch (e) {}
+  try {
+    if (typeof logActivity_ === 'function') logActivity_(action, entity, details);
+  } catch (e) {}
 }
 
 function ensureMaintenanceSheet_() {
@@ -44,6 +91,7 @@ function ensureMaintenanceSheet_() {
 
 function getMaintenanceList() {
   try {
+    var auth = requireMaintenancePerm_('maintenance.view'); if (auth) return auth;
     var sheet = ensureMaintenanceSheet_();
     var data  = sheet.getDataRange().getValues();
     if (data.length <= 1) return [];
@@ -82,6 +130,8 @@ function getMaintenanceList() {
 
 function addMaintenance(data) {
   try {
+    var auth = requireMaintenancePerm_('maintenance.add'); if (auth) return auth;
+    data = data || {};
     var sheet    = ensureMaintenanceSheet_();
     var username = getMaintUsername_();
     var now      = new Date();
@@ -113,6 +163,8 @@ function addMaintenance(data) {
 
 function updateMaintenance(rowNum, data) {
   try {
+    var auth = requireMaintenancePerm_('maintenance.edit'); if (auth) return auth;
+    data = data || {};
     var sheet = ensureMaintenanceSheet_();
     var maxRow = sheet.getLastRow();
     if (rowNum < 2 || rowNum > maxRow) return { error: 'رقم الصف غير صحيح' };
@@ -141,6 +193,7 @@ function updateMaintenance(rowNum, data) {
 
 function deleteMaintenance(rowNum) {
   try {
+    var auth = requireMaintenancePerm_('maintenance.delete'); if (auth) return auth;
     var sheet  = ensureMaintenanceSheet_();
     var maxRow = sheet.getLastRow();
     if (rowNum < 2 || rowNum > maxRow) return { error: 'رقم الصف غير صحيح' };
