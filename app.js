@@ -253,6 +253,9 @@ function silentRefresh() {
     .withSuccessHandler(applyAllData_)
     .withFailureHandler(()=>{})
     .getAllData();
+  // إذا كان قسم المالية مفتوحاً أعد تحميله لأنه يعتمد على API منفصل
+  const finPage = document.getElementById('page-finance');
+  if (finPage && finPage.classList.contains('active')) loadFinance();
 }
 
 function renderTopbarAlerts_(a) {
@@ -800,10 +803,6 @@ function savePayment() {
         const baseRent = Number(ff.annualRent || ff.totalRent || 0);
         if (baseRent > 0) ff.collectRate = Math.round(ff.totalPaid / baseRent * 100);
         renderDashboard();
-      }
-      // تحديث قسم المالية إذا كان مفتوحاً
-      if (document.getElementById('page-finance') && document.getElementById('page-finance').classList.contains('active')) {
-        loadFinance();
       }
       toast('✅ تم تسجيل الدفعة'); silentRefresh(); loadContractPaymentHistory(row);
     })
