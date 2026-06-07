@@ -1686,7 +1686,9 @@ function saveUser() {
     }
     if (r && r.error) { out.innerHTML = '<div class="result err">' + r.error + '</div>'; return; }
     out.innerHTML = '<div class="result">✅ ' + (r && r.message || 'تم الحفظ') + '</div>';
-    setTimeout(() => { closeModal('userModal'); loadUsers(); }, 1200);
+    // إذا عدّل المستخدم حسابه هو، أعد تحميل الجلسة لتطبيق الصلاحيات الجديدة فوراً
+    const isSelfEdit = row > 0 && _currentUser && _currentUser.username === data.username;
+    setTimeout(() => { closeModal('userModal'); isSelfEdit ? checkSession() : loadUsers(); }, 1200);
   };
   if (row > 0) {
     google.script.run.withSuccessHandler(handler).withFailureHandler(e => { out.innerHTML = '<div class="result err">' + e.message + '</div>'; }).updateUser(row, data);
