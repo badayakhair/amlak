@@ -262,6 +262,149 @@ function deleteMaintenance(rowNum) {
   });
 }
 
+// ══════════════════════════════════════════════════════════════════
+// Payment Edit — تعديل/تصحيح الدفعات (Admin/Manager)
+// ══════════════════════════════════════════════════════════════════
+
+function ensurePaymentEditPermissions_() {
+  try {
+    if (typeof ROLES === 'undefined') return;
+    var map = { admin: ['payments.edit'], manager: ['payments.edit'] };
+    Object.keys(map).forEach(function(role) {
+      if (!ROLES[role] || !ROLES[role].perms) return;
+      map[role].forEach(function(p) {
+        if (ROLES[role].perms.indexOf(p) < 0) ROLES[role].perms.push(p);
+      });
+    });
+  } catch(e) {}
+}
+
+// يُعيد سجل دفعات العقد مع رقم صف كل دفعة في شيت سجل_الدفعات (للمسؤولين فقط)
+function getContractPaymentHistoryAdmin(rowNum) {
+  ensurePaymentEditPermissions_();
+  var auth = requirePerm_('payments.edit'); if (auth) return auth;
+  rowNum = parseInt(rowNum, 10);
+  if (!rowNum) return [];
+
+  var contractId = '';
+  try {
+    var cSheet = getSheet(CFG.SHEETS.CONTRACTS);
+    if (cSheet && cSheet.getLastRow() >= rowNum) {
+      contractId = String(cSheet.getRange(rowNum, C.ID+1).getValue() || '');
+    }
+  } catch(e) {}
+
+  var sheet = getSheet(CFG.SHEETS.PAYMENTS);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+
+  var data = sheet.getDataRange().getValues().slice(1);
+  var results = [];
+  for (var i = 0; i < data.length; i++) {
+    var r = data[i];
+    var cRow = parseInt(r[PC.ROW], 10);
+    var cId = String(r[PC.CONTRACT_ID] || '');
+    var match = (contractId && cId === contractId) || (!contractId && cRow === rowNum);
+    if (!match) continue;
+    var ts = r[PC.TIMESTAMP];
+    var dateStr = (ts instanceof Date) ? fmtDatetime(ts) : String(ts || '');
+    results.push({
+      logRow:      i + 2,
+      date:        dateStr,
+      username:    String(r[PC.USERNAME]       || '—'),
+      amount:      parseNum(r[PC.AMOUNT]),
+      before:      parseNum(r[PC.PAID_BEFORE]),
+      after:       parseNum(r[PC.PAID_AFTER]),
+      remaining:   parseNum(r[PC.REMAINING_AFTER]),
+      notes:       String(r[PC.NOTES]          || ''),
+      tenant:      String(r[PC.TENANT]         || ''),
+      contractRow: cRow
+    });
+  }
+  results.sort(function(a, b) { return b.logRow - a.logRow; });
+  return results;
+}
+
+// تعديل مبلغ دفعة محددة مع تحديث جميع الأقسام المرتبطة
+function updatePayment(logRowNum, newAmount, notes) {
+  ensurePaymentEditPermissions_();
+  var auth = requirePerm_('payments.edit'); if (auth) return auth;
+
+  return withLock_(function() {
+    logRowNum = parseInt(logRowNum, 10);
+    newAmount = parseNum(newAmount);
+    if (!logRowNum || logRowNum < 2) return { error: 'رقم سجل الدفعة غير صحيح' };
+    if (newAmount <= 0) return { error: 'المبلغ الجديد يجب أن يكون أكبر من صفر' };
+
+    var paySheet = getSheet(CFG.SHEETS.PAYMENTS);
+    if (!paySheet || paySheet.getLastRow() < logRowNum) return { error: 'سجل الدفعة غير موجود' };
+
+    var payRow = paySheet.getRange(logRowNum, 1, 1, 12).getValues()[0];
+    var oldAmount    = parseNum(payRow[PC.AMOUNT]);
+    var contractRow  = parseInt(payRow[PC.ROW], 10);
+    var tenant       = String(payRow[PC.TENANT]   || '');
+    var tenantPhone  = '';
+
+    if (!contractRow) return { error: 'لا يمكن تحديد العقد المرتبط بهذه الدفعة' };
+
+    var delta = newAmount - oldAmount;
+    if (Math.abs(delta) < 0.01) return { success: true, message: 'لا تغيير في المبلغ' };
+
+    var contractSheet = getSheet(CFG.SHEETS.CONTRACTS);
+    if (!contractSheet || contractSheet.getLastRow() < contractRow) return { error: 'العقد المرتبط غير موجود' };
+
+    var curPaid      = parseNum(contractSheet.getRange(contractRow, C.PAID+1).getValue());
+    var rent         = parseNum(contractSheet.getRange(contractRow, C.RENT+1).getValue());
+    var newContractPaid = curPaid + delta;
+
+    try { tenantPhone = String(contractSheet.getRange(contractRow, C.PHONE+1).getValue() || ''); } catch(e) {}
+
+    if (newContractPaid < 0) {
+      return { error: 'التعديل يُنتج رصيداً مدفوعاً سالباً (' + newContractPaid + ' ر.س). المسدد الحالي: ' + curPaid + ' ر.س' };
+    }
+    if (rent > 0 && newContractPaid > rent) {
+      return { error: 'التعديل يتجاوز قيمة الإيجار (' + rent + ' ر.س). المبلغ الجديد المحسوب: ' + newContractPaid + ' ر.س' };
+    }
+
+    var who = currentUser() || 'system';
+    var correctionNote = 'تصحيح: ' + oldAmount + ' ← ' + newAmount + ' ر.س (بواسطة ' + who + ')';
+    if (notes) correctionNote += ' — ' + String(notes);
+    var existingNotes = String(payRow[PC.NOTES] || '');
+    var finalNotes = existingNotes ? existingNotes + ' || ' + correctionNote : correctionNote;
+
+    // تحديث سجل الدفعة
+    paySheet.getRange(logRowNum, PC.AMOUNT+1).setValue(newAmount);
+    paySheet.getRange(logRowNum, PC.PAID_AFTER+1).setValue(parseNum(payRow[PC.PAID_AFTER]) + delta);
+    paySheet.getRange(logRowNum, PC.REMAINING_AFTER+1).setValue(
+      Math.max(0, parseNum(payRow[PC.REMAINING_AFTER]) - delta));
+    paySheet.getRange(logRowNum, PC.NOTES+1).setValue(finalNotes);
+
+    // تحديث عمود PAID في العقد
+    contractSheet.getRange(contractRow, C.PAID+1).setValue(newContractPaid);
+    if (rent > 0 && newContractPaid >= rent) {
+      contractSheet.getRange(contractRow, C.REGULARITY+1).setValue('ملتزم');
+    }
+
+    // تحديث سجل المستأجر (يُعيد حساب TOTAL_PAID من جميع العقود)
+    if (tenant) updateTenantRecord(tenant, tenantPhone);
+
+    invalidateRuntimeCaches_();
+    SpreadsheetApp.flush();
+
+    try {
+      logActivity(who, 'تعديل دفعة', 'دفعات',
+        'تصحيح سجل صف ' + logRowNum + ': ' + oldAmount + ' ← ' + newAmount +
+        ' ر.س — عقد صف ' + contractRow + (tenant ? ' (' + tenant + ')' : ''));
+    } catch(e) {}
+
+    return {
+      success:  true,
+      message:  'تم تعديل الدفعة من ' + oldAmount + ' إلى ' + newAmount + ' ر.س',
+      newPaid:  newContractPaid,
+      remaining: Math.max(0, rent - newContractPaid)
+    };
+  });
+}
+
 // يُعيد أسماء المباني النشطة لمستخدمي الصيانة (لا يشترط buildings.view)
 function getMaintenanceBuildingNames() {
   var auth = requireMaintenancePerm_('maintenance.view'); if (auth) return auth;
