@@ -106,7 +106,6 @@ function ensureMaintenancePermissions_() {
 }
 
 function requireMaintenancePerm_(perm) {
-  ensureMaintenancePermissions_();
   return requirePerm_(perm);
 }
 

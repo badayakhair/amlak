@@ -7,7 +7,7 @@ function handleApiJsonp_(e) {
   e = e || {};
   e.parameter = e.parameter || {};
 
-  var callback = String(e.parameter.callback || 'callback').replace(/[^a-zA-Z0-9_$\.]/g, '');
+  var callback = String(e.parameter.callback || 'callback').replace(/[^a-zA-Z0-9_$]/g, '');
   if (!callback) callback = 'callback';
 
   var out;
@@ -47,9 +47,10 @@ function sendToBuildingActiveCustom(bldg, msg) {
   statuses.forEach(function(st) {
     try {
       var r = sendToBuildingCustom(bldg, msg, st) || {};
+      if (r.error) { total.failed += 1; return; }
       total.sent   += Number(r.sent   || 0);
       total.failed += Number(r.failed || 0);
-    } catch(e) {}
+    } catch(e) { total.failed += 1; }
   });
   return total;
 }
@@ -61,7 +62,6 @@ function apiEnsureMaintenancePermissions_() {
 }
 
 function apiNormalizeSession_(sessionRaw) {
-  apiEnsureMaintenancePermissions_();
   try {
     var session = JSON.parse(sessionRaw || '{}');
     if (session && Array.isArray(session.perms) && typeof expandPerms_ === 'function') {
@@ -189,6 +189,14 @@ function callPublicApi_(action, args, token) {
   var root = typeof globalThis !== 'undefined' ? globalThis : this;
   if (!fnName || typeof root[fnName] !== 'function') {
     throw new Error('API action غير مسموح أو غير موجود: ' + action);
+  }
+
+  // ── التحقق من صلاحية النسخ الاحتياطي قبل الاستعادة ──
+  if (action === 'restoreBackupFromFile') {
+    if (typeof requirePerm_ === 'function') {
+      var backupErr = requirePerm_('backup.run');
+      if (backupErr) return backupErr;
+    }
   }
 
   // ── التحقق من صحة بيانات المبنى على جانب الخادم (batch 2) ──
