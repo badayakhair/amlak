@@ -262,3 +262,23 @@ function deleteMaintenance(rowNum) {
     return { success: true, message: 'تم حذف طلب الصيانة' };
   });
 }
+
+// يُعيد أسماء المباني النشطة لمستخدمي الصيانة (لا يشترط buildings.view)
+function getMaintenanceBuildingNames() {
+  var auth = requireMaintenancePerm_('maintenance.view'); if (auth) return auth;
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('المباني');
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var data = sheet.getDataRange().getValues().slice(1);
+  var names = [];
+  data.forEach(function(r) {
+    var name = String(r[0] || '').trim();
+    if (!name || name === 'الإجمالي') return;
+    // BC.ARCHIVED = index 11
+    var archived = String(r[11] || '').toLowerCase().trim();
+    if (archived !== 'نعم' && archived !== 'yes' && archived !== '1' && archived !== 'true') {
+      names.push(name);
+    }
+  });
+  return names;
+}

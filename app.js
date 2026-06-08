@@ -103,11 +103,6 @@ function expandPermsClient_(perms) {
   if (out.includes('maintenance.add') || out.includes('maintenance.edit') || out.includes('maintenance.delete')) {
     addPermClient_(out, 'maintenance.view');
   }
-  if (out.includes('maintenance.add') || out.includes('maintenance.edit')) {
-    addPermClient_(out, 'buildings.view');
-    addPermClient_(out, 'tenants.view');
-    addPermClient_(out, 'contracts.view');
-  }
   return out;
 }
 
@@ -1578,6 +1573,7 @@ function doLogin() {
 function resetClientStateAfterLogout() {
   _currentUser = null;
   S = { contracts:[], buildings:[], tenants:[], stats:null, loaded:false, dueAlerts:[] };
+  try { localStorage.removeItem('amlak_cache_v2'); } catch(e) {}
 
   // إغلاق أي نوافذ منبثقة وإرجاع الصفحة لحالة نظيفة بدون تحديث يدوي.
   document.querySelectorAll('.modal-overlay').forEach(function(el){ el.style.display = 'none'; });
@@ -2048,6 +2044,27 @@ function openMaintenanceModal(mode, rowNum) {
   if (!hasPerm(mode === 'edit' ? 'maintenance.edit' : 'maintenance.add')) {
     toast('ليس لديك الصلاحية المطلوبة', 'err'); return;
   }
+  // إذا كانت قائمة المباني فارغة (مستخدم صلاحيات صيانة فقط)، اجلبها أولاً
+  const buildingNames = (S.buildings || []).map(b => b.name);
+  if (buildingNames.length) {
+    _doOpenMaintenanceModal_(mode, rowNum, buildingNames);
+  } else {
+    const btn = document.getElementById('mntSaveBtn');
+    if (btn) btn.disabled = true;
+    google.script.run
+      .withSuccessHandler(names => {
+        if (btn) btn.disabled = false;
+        _doOpenMaintenanceModal_(mode, rowNum, names || []);
+      })
+      .withFailureHandler(() => {
+        if (btn) btn.disabled = false;
+        _doOpenMaintenanceModal_(mode, rowNum, []);
+      })
+      .getMaintenanceBuildingNames();
+  }
+}
+
+function _doOpenMaintenanceModal_(mode, rowNum, buildingNames) {
   document.getElementById('mntModalTitle').textContent = mode === 'add' ? '🔧 إضافة طلب صيانة' : '✏️ تعديل طلب صيانة';
   document.getElementById('mntEditRow').value    = rowNum || '';
   document.getElementById('mntModalResult').innerHTML = '';
@@ -2058,7 +2075,7 @@ function openMaintenanceModal(mode, rowNum) {
 
   const bsel = document.getElementById('mnt-building');
   bsel.innerHTML = '<option value="">اختر مبنى...</option>';
-  S.buildings.forEach(b => { const o = document.createElement('option'); o.value = o.text = b.name; bsel.add(o); });
+  buildingNames.forEach(name => { const o = document.createElement('option'); o.value = o.text = name; bsel.add(o); });
 
   document.getElementById('mnt-category').value = 'أخرى';
   document.getElementById('mnt-priority').value  = 'عادي';
@@ -2166,6 +2183,7 @@ function confirmDeleteMaintenance(row) {
           CACHE_KEY,
           JSON.stringify({
             time: Date.now(),
+            username: (_currentUser && _currentUser.username) ? _currentUser.username : '',
             data: data
           })
         );
@@ -2188,20 +2206,19 @@ function confirmDeleteMaintenance(row) {
 
         const obj = JSON.parse(cached);
         const age = Date.now() - (obj.time || 0);
+        const currentUsername = (_currentUser && _currentUser.username) ? _currentUser.username : '';
+        // تجاهل الكاش إذا كان لمستخدم مختلف أو منتهي الصلاحية
+        const sameUser = obj.username && currentUsername && obj.username === currentUsername;
 
-        if (obj && obj.data && age < CACHE_MAX_AGE_MS) {
-
-          console.log("Using cached data (age: " + Math.round(age/1000) + "s)");
-
+        if (obj && obj.data && age < CACHE_MAX_AGE_MS && sameUser) {
           originalApply(obj.data);
-        } else if (age >= CACHE_MAX_AGE_MS) {
+        } else {
           localStorage.removeItem(CACHE_KEY);
-          console.log("Cache expired, fetching fresh data");
         }
       }
 
     } catch (e) {
-      console.log(e);
+      localStorage.removeItem(CACHE_KEY);
     }
 
     return originalLoadData();
