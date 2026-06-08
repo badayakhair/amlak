@@ -1062,7 +1062,7 @@ function sendSmsAction(){
   const info=smsPartsInfo_(msg); if(info.indexOf('2 جزء')>0 || info.indexOf('3 جزء')>0 || info.indexOf('4 جزء')>0){ if(!confirm('تنبيه: '+info+' وقد تزيد تكلفة الإرسال. هل تريد المتابعة؟')) return; }
   const btn=document.querySelector('[onclick="sendSmsAction()"]');
   btn.disabled=true; btn.innerHTML='<span class="spin"></span>جارٍ الإرسال...';
-  const cb=r=>{btn.disabled=false;btn.textContent='📤 إرسال';document.getElementById('smsResult').innerHTML=`<div class="result">✅ أُرسلت: ${r.sent} | ❌ فشل: ${r.failed||0}</div>`;toast(`✅ أُرسلت ${r.sent} رسالة`);};
+  const cb=r=>{btn.disabled=false;btn.textContent='📤 إرسال';if(r&&r.error){document.getElementById('smsResult').innerHTML=`<div class="result err">❌ ${r.error}</div>`;toast('❌ '+r.error,'err');return;}document.getElementById('smsResult').innerHTML=`<div class="result">✅ أُرسلت: ${r.sent||0} | ❌ فشل: ${r.failed||0}</div>`;toast(`✅ أُرسلت ${r.sent||0} رسالة`);};
   const fail=e=>{btn.disabled=false;btn.textContent='📤 إرسال';toast('خطأ: '+e.message,'err');};
   if(target==='expiring_60') google.script.run.withSuccessHandler(cb).withFailureHandler(fail).sendExpiryReminders(60,false);
   else if(target==='expiring_30') google.script.run.withSuccessHandler(cb).withFailureHandler(fail).sendExpiryReminders(30,false);
@@ -1077,7 +1077,7 @@ function sendSmsAction(){
 function quickSend(type){
   if (!hasPerm('sms.send')) { toast('ليس لديك صلاحية إرسال الرسائل', 'err'); return; }
   const btn=event.target; btn.disabled=true; btn.innerHTML='<span class="spin"></span>جارٍ الإرسال...';
-  const cb=r=>{btn.disabled=false;btn.textContent=btn.textContent.replace('جارٍ الإرسال...','');toast(`✅ أُرسلت ${r.sent} رسالة`);};
+  const cb=r=>{btn.disabled=false;btn.textContent=btn.textContent.replace('جارٍ الإرسال...','');if(r&&r.error){toast('❌ '+r.error,'err');return;}toast(`✅ أُرسلت ${r.sent||0} رسالة`);};
   const fail=e=>{btn.disabled=false;toast('خطأ: '+e.message,'err');};
   if(type==='exp30') google.script.run.withSuccessHandler(cb).withFailureHandler(fail).sendExpiryReminders(30,true);
   else if(type==='exp60') google.script.run.withSuccessHandler(cb).withFailureHandler(fail).sendExpiryReminders(60,true);
@@ -1573,6 +1573,10 @@ function doLogin() {
 function resetClientStateAfterLogout() {
   _currentUser = null;
   S = { contracts:[], buildings:[], tenants:[], stats:null, loaded:false, dueAlerts:[] };
+  _allUsers = [];
+  _activityData = [];
+  _smsContext = null;
+  window._currentMapData = null;
   try { localStorage.removeItem('amlak_cache_v2'); } catch(e) {}
 
   // إغلاق أي نوافذ منبثقة وإرجاع الصفحة لحالة نظيفة بدون تحديث يدوي.
@@ -1608,7 +1612,10 @@ function doLogout() {
   if (!confirm('هل تريد تسجيل الخروج؟')) return;
   // أخفِ الواجهة فوراً ثم أرسل طلب الخروج في الخلفية
   resetClientStateAfterLogout();
-  google.script.run.withSuccessHandler(()=>{}).withFailureHandler(()=>{}).logout();
+  google.script.run
+    .withSuccessHandler(()=>{})
+    .withFailureHandler(()=>{ try { localStorage.removeItem('AMLAAK_TOKEN'); } catch(e) {} })
+    .logout();
 }
 
 // ═══════════════════════════════════════════════
@@ -1941,7 +1948,7 @@ function populateAllSelects(){
 }
 
 // ── Utils ─────────────────────────────────────
-function nf(n){ var x=Number(n||0); return x?Math.round(x).toLocaleString('ar-SA'):'—'; }
+function nf(n){ if(n===null||n===undefined||n==='') return '—'; var x=Number(n); return isNaN(x)?'—':Math.round(x).toLocaleString('ar-SA'); }
 
 // ── التحقق من رقم الجوال السعودي ──────────────────────────────
 // يقبل: 05XXXXXXXX أو 009665XXXXXXXX أو +9665XXXXXXXX
@@ -2056,9 +2063,9 @@ function openMaintenanceModal(mode, rowNum) {
         if (btn) btn.disabled = false;
         _doOpenMaintenanceModal_(mode, rowNum, names || []);
       })
-      .withFailureHandler(() => {
+      .withFailureHandler(e => {
         if (btn) btn.disabled = false;
-        _doOpenMaintenanceModal_(mode, rowNum, []);
+        toast('تعذر جلب قائمة المباني: ' + (e && e.message ? e.message : 'خطأ غير معروف'), 'err');
       })
       .getMaintenanceBuildingNames();
   }
