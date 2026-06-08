@@ -1270,7 +1270,7 @@ function openCustomSms(name, phone, rent, situation) {
 document.addEventListener('DOMContentLoaded', () => {
   const ta = document.getElementById('smsCustomText');
   if (ta) ta.addEventListener('input', function() {
-    document.getElementById('smsCustomCount').textContent = this.value.length + ' حرف';
+    document.getElementById('smsCustomCount').textContent = smsPartsInfo_(this.value);
   });
 });
 
@@ -1290,12 +1290,12 @@ function setSmsTpl(type) {
       .withSuccessHandler(r => {
         if (r.error) { ta.value = ''; toast('خطأ: '+r.error, 'err'); return; }
         ta.value = r.text;
-        document.getElementById('smsCustomCount').textContent = r.text.length + ' حرف';
+        document.getElementById('smsCustomCount').textContent = smsPartsInfo_(r.text);
       })
       .withFailureHandler(e => { ta.value = ''; toast('خطأ: '+e.message, 'err'); })
       .askAI(`اكتب رسالة SMS مخصصة قصيرة (أقل من 155 حرف) للمستأجر ${c.name}. ${c.situation||'موضوع عام عن الإيجار'}. اكتب الرسالة فقط.`, '');
   }
-  document.getElementById('smsCustomCount').textContent = ta.value.length + ' حرف';
+  document.getElementById('smsCustomCount').textContent = smsPartsInfo_(ta.value);
 }
 
 function sendCustomSms() {
@@ -1722,6 +1722,7 @@ function confirmDeleteUser(rowNum, username) {
       if (r.error) { toast('خطأ: ' + r.error, 'err'); return; }
       toast('✅ تم الحذف'); loadUsers();
     })
+    .withFailureHandler(e => toast('خطأ: ' + e.message, 'err'))
     .deleteUser(rowNum);
 }
 
