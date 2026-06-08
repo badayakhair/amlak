@@ -103,6 +103,11 @@ function expandPermsClient_(perms) {
   if (out.includes('maintenance.add') || out.includes('maintenance.edit') || out.includes('maintenance.delete')) {
     addPermClient_(out, 'maintenance.view');
   }
+  if (out.includes('maintenance.add') || out.includes('maintenance.edit')) {
+    addPermClient_(out, 'buildings.view');
+    addPermClient_(out, 'tenants.view');
+    addPermClient_(out, 'contracts.view');
+  }
   return out;
 }
 
