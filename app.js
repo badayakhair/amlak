@@ -29,6 +29,7 @@ const ALL_PERMS = [
   { key:'buildings.delete',  label:'حذف مبنى' },
   { key:'tenants.view',      label:'عرض المستأجرين' },
   { key:'payments.add',      label:'تسجيل دفعات' },
+  { key:'payments.edit',     label:'تعديل/تصحيح دفعات' },
   { key:'finance.view',      label:'التقارير المالية' },
   { key:'sms.send',          label:'إرسال SMS' },
   { key:'ai.use',            label:'المساعد الذكي' },
@@ -49,7 +50,7 @@ const ROLE_DEFAULT_PERMS = {
   admin:    ALL_PERMS.map(p => p.key),
   manager:  ['contracts.view','contracts.add','contracts.edit','contracts.delete',
              'buildings.view','buildings.add','buildings.edit',
-             'tenants.view','payments.add','finance.view','sms.send','ai.use','alerts.view','log.view','reports.export',
+             'tenants.view','payments.add','payments.edit','finance.view','sms.send','ai.use','alerts.view','log.view','reports.export',
              'maintenance.view','maintenance.add','maintenance.edit','maintenance.delete'],
   employee: ['contracts.view','contracts.add','contracts.edit',
              'buildings.view','tenants.view','payments.add','sms.send','ai.use','alerts.view',
@@ -85,9 +86,10 @@ function addPermClient_(list, perm) {
 function expandPermsClient_(perms) {
   const out = [];
   (perms || []).forEach(p => addPermClient_(out, p));
-  if (out.includes('contracts.add') || out.includes('contracts.edit') || out.includes('contracts.delete') || out.includes('payments.add')) {
+  if (out.includes('contracts.add') || out.includes('contracts.edit') || out.includes('contracts.delete') || out.includes('payments.add') || out.includes('payments.edit')) {
     addPermClient_(out, 'contracts.view');
   }
+  if (out.includes('payments.edit')) addPermClient_(out, 'payments.add');
   if (out.includes('contracts.add') || out.includes('contracts.edit')) {
     addPermClient_(out, 'buildings.view');
     addPermClient_(out, 'tenants.view');
@@ -826,21 +828,122 @@ function loadContractPaymentHistory(row) {
   const box = document.getElementById('payHistory');
   if (!box) return;
   box.innerHTML = '<div style="padding:8px;color:#718096">جارٍ التحميل...</div>';
-  // إذا لم يستجب الخادم خلال 15 ثانية، أظهر خيار إعادة المحاولة
+  const canEdit = hasPerm('payments.edit');
   const uiTimer = setTimeout(() => {
-    if (box.querySelector && box.innerHTML.includes('جارٍ التحميل')) {
+    if (box.innerHTML.includes('جارٍ التحميل')) {
       box.innerHTML = `<div class="result err">استغرق التحميل وقتاً طويلاً. <button class="btn btn-sm" onclick="loadContractPaymentHistory(${parseInt(row)})">إعادة المحاولة</button></div>`;
     }
   }, 15000);
+  const onSuccess = rows => {
+    clearTimeout(uiTimer);
+    rows = rows || [];
+    if (!rows.length) { box.innerHTML = '<div style="padding:8px;color:#718096">لا توجد دفعات مسجلة لهذا العقد</div>'; return; }
+    const editTh = canEdit ? '<th></th>' : '';
+    const rowsHtml = rows.map(p => {
+      const remAfter = Number(p.remaining) || 0;
+      const remBefore = remAfter + Number(p.amount || 0);
+      const editTd = canEdit ? `<td><button class="btn btn-sm" style="font-size:11px;padding:2px 7px" onclick="openPaymentEditForm(${p.logRow},${p.amount})">✏️</button></td>` : '';
+      return `<tr>
+        <td style="font-size:11px;white-space:nowrap">${escHtml(p.date)}</td>
+        <td>${escHtml(p.username)}</td>
+        <td style="font-weight:600;color:var(--green);direction:ltr;text-align:left">+${nf(p.amount)}</td>
+        <td style="color:var(--amber)">${nf(remBefore)}</td>
+        <td style="color:${remAfter>0?'var(--red)':'var(--green)'}">${nf(remAfter)}</td>
+        <td style="font-size:12px">${escHtml(p.notes)||'—'}</td>${editTd}
+      </tr>`;
+    }).join('');
+    const editForm = canEdit ? `
+      <div id="editPaymentForm" style="display:none;margin-top:10px;padding:12px;background:#f7fafc;border-radius:8px;border:1px solid #e2e8f0">
+        <div style="font-weight:600;color:#1A3A5C;margin-bottom:8px">✏️ تعديل الدفعة المحددة</div>
+        <input type="hidden" id="editPayLogRow">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+          <div><label style="font-size:12px;color:#718096;display:block;margin-bottom:4px">المبلغ الجديد (ر.س)</label>
+            <input type="number" id="editPayAmount" class="form-control" min="0.01" step="0.01"></div>
+          <div><label style="font-size:12px;color:#718096;display:block;margin-bottom:4px">سبب التصحيح (اختياري)</label>
+            <input type="text" id="editPayNotes" class="form-control" placeholder="اكتب السبب..."></div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button id="editPaySaveBtn" class="btn btn-primary btn-sm" onclick="savePaymentEdit(${parseInt(row)})">💾 حفظ التعديل</button>
+          <button class="btn btn-sm" onclick="cancelPaymentEdit()">إلغاء</button>
+        </div>
+        <div id="editPayResult" style="margin-top:8px"></div>
+      </div>` : '';
+    box.innerHTML = `<div class="tbl-wrap"><table><thead><tr>
+      <th>التاريخ</th><th>المستخدم</th><th>المبلغ</th><th>متبقي قبل</th><th>متبقي بعد</th><th>ملاحظات</th>${editTh}
+    </tr></thead><tbody>${rowsHtml}</tbody></table></div>${editForm}`;
+  };
+  const onFail = e => {
+    clearTimeout(uiTimer);
+    box.innerHTML = '<div class="result err">خطأ في تحميل سجل الدفعات: ' + escHtml(e.message) + '</div>';
+  };
+  if (canEdit) {
+    google.script.run.withSuccessHandler(onSuccess).withFailureHandler(onFail).getContractPaymentHistoryAdmin(row);
+  } else {
+    google.script.run.withSuccessHandler(onSuccess).withFailureHandler(onFail).getContractPaymentHistory(row);
+  }
+}
+
+function openPaymentEditForm(logRow, amount) {
+  const form = document.getElementById('editPaymentForm');
+  if (!form) return;
+  document.getElementById('editPayLogRow').value = logRow;
+  document.getElementById('editPayAmount').value = amount;
+  document.getElementById('editPayNotes').value = '';
+  document.getElementById('editPayResult').innerHTML = '';
+  form.style.display = 'block';
+  document.getElementById('editPayAmount').focus();
+  document.getElementById('editPayAmount').select();
+}
+
+function cancelPaymentEdit() {
+  const form = document.getElementById('editPaymentForm');
+  if (form) form.style.display = 'none';
+}
+
+function savePaymentEdit(contractRow) {
+  const logRow = parseInt(document.getElementById('editPayLogRow').value);
+  const newAmount = parseFloat(document.getElementById('editPayAmount').value);
+  const notes = document.getElementById('editPayNotes').value.trim();
+  const out = document.getElementById('editPayResult');
+  if (!logRow) { out.innerHTML = '<div class="result err">خطأ: لم يتم تحديد الدفعة</div>'; return; }
+  if (!newAmount || newAmount <= 0 || isNaN(newAmount)) { out.innerHTML = '<div class="result err">أدخل مبلغاً صحيحاً</div>'; return; }
+  const btn = document.getElementById('editPaySaveBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span>جارٍ الحفظ...'; }
   google.script.run
-    .withSuccessHandler(rows=>{
-      clearTimeout(uiTimer);
-      rows = rows || [];
-      if(!rows.length){ box.innerHTML = '<div style="padding:8px;color:#718096">لا توجد دفعات مسجلة لهذا العقد</div>'; return; }
-      box.innerHTML = `<div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>المستخدم</th><th>المبلغ</th><th>متبقي قبل</th><th>متبقي بعد</th><th>ملاحظات</th></tr></thead><tbody>${rows.map(p=>{const remAfter=Number(p.remaining)||0;const remBefore=remAfter+Number(p.amount||0);return`<tr><td style="font-size:11px;white-space:nowrap">${escHtml(p.date)}</td><td>${escHtml(p.username)}</td><td style="font-weight:600;color:var(--green);direction:ltr;text-align:left">+${nf(p.amount)}</td><td style="color:var(--amber)">${nf(remBefore)}</td><td style="color:${remAfter>0?'var(--red)':'var(--green)'}">${nf(remAfter)}</td><td style="font-size:12px">${escHtml(p.notes)||'—'}</td></tr>`;}).join('')}</tbody></table></div>`;
+    .withSuccessHandler(r => {
+      if (btn) { btn.disabled = false; btn.textContent = '💾 حفظ التعديل'; }
+      if (r && r.error) { out.innerHTML = `<div class="result err">❌ ${r.error}</div>`; return; }
+      out.innerHTML = `<div class="result">✅ ${r.message || 'تم التعديل'}</div>`;
+      toast('✅ ' + (r.message || 'تم تعديل الدفعة'));
+      // تحديث S.contracts محلياً بالقيم الجديدة
+      if (contractRow && r.newPaid !== undefined) {
+        const c = S.contracts.find(x => x.row === contractRow);
+        if (c) {
+          const oldPaid = c.paid;
+          c.paid = r.newPaid;
+          c.remaining = r.remaining !== undefined ? r.remaining : Math.max(0, (c.rent || 0) - c.paid);
+          const delta = c.paid - oldPaid;
+          const t = S.tenants.find(x => x.name === c.tenant);
+          if (t) t.totalPaid = (Number(t.totalPaid) || 0) + delta;
+          renderContracts();
+          renderTenants();
+        }
+        if (S.stats && S.stats.financials) {
+          const ff = S.stats.financials;
+          const delta = r.newPaid - (S.contracts.find(x=>x.row===contractRow)||{}).paid || 0;
+          ff.totalPaid = (Number(ff.totalPaid) || 0) + delta;
+          ff.remaining = Math.max(0, (Number(ff.remaining) || 0) - delta);
+          renderDashboard();
+        }
+      }
+      silentRefresh();
+      setTimeout(() => loadContractPaymentHistory(contractRow), 800);
     })
-    .withFailureHandler(e=>{ clearTimeout(uiTimer); box.innerHTML = '<div class="result err">خطأ في تحميل سجل الدفعات: '+escHtml(e.message)+'</div>'; })
-    .getContractPaymentHistory(row);
+    .withFailureHandler(e => {
+      if (btn) { btn.disabled = false; btn.textContent = '💾 حفظ التعديل'; }
+      out.innerHTML = `<div class="result err">خطأ: ${escHtml(e.message)}</div>`;
+    })
+    .updatePayment(logRow, newAmount, notes);
 }
 
 // ── Buildings Modal ───────────────────────────

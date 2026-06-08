@@ -58,6 +58,7 @@ function sendToBuildingActiveCustom(bldg, msg) {
 function apiEnsureMaintenancePermissions_() {
   try {
     if (typeof ensureMaintenancePermissions_ === 'function') ensureMaintenancePermissions_();
+    if (typeof ensurePaymentEditPermissions_ === 'function') ensurePaymentEditPermissions_();
   } catch (e) {}
 }
 
@@ -66,6 +67,11 @@ function apiNormalizeSession_(sessionRaw) {
     var session = JSON.parse(sessionRaw || '{}');
     if (session && Array.isArray(session.perms) && typeof expandPerms_ === 'function') {
       session.perms = expandPerms_(session.perms);
+    }
+    // حقن payments.edit لأدوار الإدارة تلقائياً (لا يُحفظ في الجلسة الأصلية)
+    if (session && Array.isArray(session.perms) &&
+        (session.role === 'admin' || session.role === 'manager')) {
+      if (session.perms.indexOf('payments.edit') < 0) session.perms.push('payments.edit');
     }
     return JSON.stringify(session);
   } catch (e) {
@@ -182,7 +188,10 @@ function callPublicApi_(action, args, token) {
     addMaintenance: 'addMaintenance',
     updateMaintenance: 'updateMaintenance',
     deleteMaintenance: 'deleteMaintenance',
-    getMaintenanceBuildingNames: 'getMaintenanceBuildingNames'
+    getMaintenanceBuildingNames: 'getMaintenanceBuildingNames',
+
+    getContractPaymentHistoryAdmin: 'getContractPaymentHistoryAdmin',
+    updatePayment: 'updatePayment'
   };
 
   var fnName = allowed[action];
