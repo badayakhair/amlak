@@ -1408,17 +1408,44 @@ function renderFinance(data) {
     </tr>`;
   }).join('') || '<tr><td colspan="6" style="text-align:center;color:#718096">لا توجد بيانات</td></tr>';
 
-  // أعلى المستأجرين
-  document.getElementById('fin-top-body').innerHTML = data.topTenants.map((t, i) => {
-    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i+1);
-    return `<tr>
-      <td style="text-align:center">${medal}</td>
-      <td><strong>${t.name}</strong></td>
-      <td style="text-align:center">${t.contracts}</td>
-      <td>${nf(t.rent)} ر.س</td>
-      <td style="color:var(--green);font-weight:500">${nf(t.paid)} ر.س</td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="5" style="text-align:center;color:#718096">لا توجد بيانات</td></tr>';
+  // أعلى المستأجرين — يُستخدم S.tenants لأن totalPaid يمثل الإجمالي الكلي
+  // بينما data.topTenants.paid يحسب السنة الحالية فقط من سجل الدفعات
+  const _topBody = document.getElementById('fin-top-body');
+  let _topRows;
+  if (S.tenants && S.tenants.length) {
+    const _rentByTenant = {};
+    (S.contracts || []).forEach(c => {
+      if (!c.tenant) return;
+      _rentByTenant[c.tenant] = (_rentByTenant[c.tenant] || 0) + (Number(c.rent) || 0);
+    });
+    _topRows = S.tenants
+      .filter(t => (t.totalPaid || 0) > 0)
+      .sort((a, b) => (b.totalPaid || 0) - (a.totalPaid || 0))
+      .slice(0, 10)
+      .map((t, i) => {
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i+1);
+        const tRent = _rentByTenant[t.name] || 0;
+        return `<tr>
+          <td style="text-align:center">${medal}</td>
+          <td><strong>${t.name}</strong></td>
+          <td style="text-align:center">${t.contractsCount || '—'}</td>
+          <td>${tRent > 0 ? nf(tRent) + ' ر.س' : '—'}</td>
+          <td style="color:var(--green);font-weight:500">${nf(t.totalPaid)} ر.س</td>
+        </tr>`;
+      });
+  } else {
+    _topRows = data.topTenants.map((t, i) => {
+      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i+1);
+      return `<tr>
+        <td style="text-align:center">${medal}</td>
+        <td><strong>${t.name}</strong></td>
+        <td style="text-align:center">${t.contracts}</td>
+        <td>${nf(t.rent)} ر.س</td>
+        <td style="color:var(--green);font-weight:500">${nf(t.paid)} ر.س</td>
+      </tr>`;
+    });
+  }
+  _topBody.innerHTML = _topRows.join('') || '<tr><td colspan="5" style="text-align:center;color:#718096">لا توجد بيانات</td></tr>';
 }
 
 
