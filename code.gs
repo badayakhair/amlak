@@ -88,43 +88,26 @@ function validateBuilding_(data) {
 
 var MAINTENANCE_SHEET = 'الصيانة';
 
-function addMaintenancePerm_(list, perm) {
-  if (list && list.indexOf(perm) < 0) list.push(perm);
-}
-
+// يُضاف إلى ROLES في وقت التشغيل لأن ROLES معرَّف في ملف code.gs الأصلي
 function ensureMaintenancePermissions_() {
   try {
     if (typeof ROLES === 'undefined') return;
-
-    if (ROLES.admin && ROLES.admin.perms) {
-      addMaintenancePerm_(ROLES.admin.perms, 'maintenance.view');
-      addMaintenancePerm_(ROLES.admin.perms, 'maintenance.add');
-      addMaintenancePerm_(ROLES.admin.perms, 'maintenance.edit');
-      addMaintenancePerm_(ROLES.admin.perms, 'maintenance.delete');
-    }
-    if (ROLES.manager && ROLES.manager.perms) {
-      addMaintenancePerm_(ROLES.manager.perms, 'maintenance.view');
-      addMaintenancePerm_(ROLES.manager.perms, 'maintenance.add');
-      addMaintenancePerm_(ROLES.manager.perms, 'maintenance.edit');
-      addMaintenancePerm_(ROLES.manager.perms, 'maintenance.delete');
-    }
-    if (ROLES.employee && ROLES.employee.perms) {
-      addMaintenancePerm_(ROLES.employee.perms, 'maintenance.view');
-      addMaintenancePerm_(ROLES.employee.perms, 'maintenance.add');
-      addMaintenancePerm_(ROLES.employee.perms, 'maintenance.edit');
-    }
-    if (ROLES.viewer && ROLES.viewer.perms) {
-      addMaintenancePerm_(ROLES.viewer.perms, 'maintenance.view');
-    }
+    var map = {
+      admin:    ['maintenance.view','maintenance.add','maintenance.edit','maintenance.delete'],
+      manager:  ['maintenance.view','maintenance.add','maintenance.edit','maintenance.delete'],
+      employee: ['maintenance.view','maintenance.add','maintenance.edit'],
+      viewer:   ['maintenance.view']
+    };
+    Object.keys(map).forEach(function(role) {
+      if (!ROLES[role] || !ROLES[role].perms) return;
+      map[role].forEach(function(p) { if (ROLES[role].perms.indexOf(p) < 0) ROLES[role].perms.push(p); });
+    });
   } catch (e) {}
 }
 
 function requireMaintenancePerm_(perm) {
   ensureMaintenancePermissions_();
-  try {
-    if (typeof requirePerm_ === 'function') return requirePerm_(perm);
-  } catch (e) {}
-  return null;
+  return requirePerm_(perm);
 }
 
 // أعمدة ورقة الصيانة (تبدأ من العمود A)
@@ -133,42 +116,18 @@ function requireMaintenancePerm_(perm) {
 // J=التكلفة الفعلية  K=الحالة  L=ملاحظات
 // M=أنشأ بواسطة  N=تاريخ الإنشاء  O=محذوف (TRUE/FALSE)
 
-function getMaintUsername_() {
-  try {
-    var raw = PropertiesService.getUserProperties().getProperty('SESSION');
-    if (!raw) return 'نظام';
-    var s = JSON.parse(raw);
-    return s.username || s.user || s.name || 'نظام';
-  } catch (e) { return 'نظام'; }
-}
-
-function safeLogActivity_(action, entity, details) {
-  try {
-    if (typeof logActivity === 'function') {
-      logActivity(getMaintUsername_(), action, entity, details);
-      return;
-    }
-  } catch (e) {}
-  try {
-    if (typeof logActivity_ === 'function') logActivity_(action, entity, details);
-  } catch (e) {}
-}
-
 function ensureMaintenanceSheet_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(MAINTENANCE_SHEET);
   if (!sheet) {
     sheet = ss.insertSheet(MAINTENANCE_SHEET);
     sheet.appendRow([
-      'التاريخ', 'المبنى', 'الوحدة', 'المستأجر', 'الفئة', 'الأولوية',
-      'وصف المشكلة', 'المسؤول/المقاول', 'جوال المقاول',
-      'التكلفة الفعلية', 'الحالة', 'ملاحظات',
-      'أنشأ بواسطة', 'تاريخ الإنشاء', 'محذوف'
+      'التاريخ','المبنى','الوحدة','المستأجر','الفئة','الأولوية',
+      'وصف المشكلة','المسؤول/المقاول','جوال المقاول',
+      'التكلفة الفعلية','الحالة','ملاحظات',
+      'أنشأ بواسطة','تاريخ الإنشاء','محذوف'
     ]);
-    var header = sheet.getRange(1, 1, 1, 15);
-    header.setBackground('#1A3A5C');
-    header.setFontColor('#FFFFFF');
-    header.setFontWeight('bold');
+    sheet.getRange(1,1,1,15).setBackground('#1A3A5C').setFontColor('#FFFFFF').setFontWeight('bold');
   }
   return sheet;
 }
@@ -186,24 +145,26 @@ function getMaintenanceList() {
       if (row[14] === true || row[14] === 'TRUE') continue;
 
       var dateVal = '';
-      try { if (row[0]) dateVal = Utilities.formatDate(new Date(row[0]), Session.getScriptTimeZone(), 'yyyy/MM/dd'); } catch(e) { dateVal = String(row[0] || ''); }
+      try {
+        if (row[0]) dateVal = Utilities.formatDate(new Date(row[0]), Session.getScriptTimeZone(), 'yyyy/MM/dd');
+      } catch(e) { dateVal = String(row[0] || ''); }
 
       result.push({
-        row:            i + 1,
-        date:           dateVal,
-        building:       String(row[1]  || ''),
-        unit:           String(row[2]  || ''),
-        tenant:         String(row[3]  || ''),
-        category:       String(row[4]  || ''),
-        priority:       String(row[5]  || ''),
-        description:    String(row[6]  || ''),
-        contractor:     String(row[7]  || ''),
-        contractorPhone:String(row[8]  || ''),
-        actualCost:     Number(row[9]  || 0),
-        status:         String(row[10] || ''),
-        notes:          String(row[11] || ''),
-        createdBy:      String(row[12] || ''),
-        createdAt:      String(row[13] || '')
+        row:             i + 1,
+        date:            dateVal,
+        building:        String(row[1]  || ''),
+        unit:            String(row[2]  || ''),
+        tenant:          String(row[3]  || ''),
+        category:        String(row[4]  || ''),
+        priority:        String(row[5]  || ''),
+        description:     String(row[6]  || ''),
+        contractor:      String(row[7]  || ''),
+        contractorPhone: String(row[8]  || ''),
+        actualCost:      Number(row[9]  || 0),
+        status:          String(row[10] || ''),
+        notes:           String(row[11] || ''),
+        createdBy:       String(row[12] || ''),
+        createdAt:       String(row[13] || '')
       });
     }
     return result;
@@ -213,21 +174,24 @@ function getMaintenanceList() {
 }
 
 function addMaintenance(data) {
-  try {
-    var auth = requireMaintenancePerm_('maintenance.add'); if (auth) return auth;
-    data = data || {};
+  var auth = requireMaintenancePerm_('maintenance.add'); if (auth) return auth;
+  data = data || {};
+  if (!String(data.building || '').trim()) return { error: 'المبنى مطلوب' };
+  if (!String(data.description || '').trim()) return { error: 'وصف المشكلة مطلوب' };
+
+  return withLock_(function() {
     var sheet    = ensureMaintenanceSheet_();
-    var username = getMaintUsername_();
+    var username = currentUser() || 'نظام';
     var now      = new Date();
 
     sheet.appendRow([
       data.date        || Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy/MM/dd'),
-      data.building    || '',
+      data.building,
       data.unit        || '',
       data.tenant      || '',
       data.category    || 'أخرى',
       data.priority    || 'عادي',
-      data.description || '',
+      data.description,
       data.contractor  || '',
       data.contractorPhone || '',
       Number(data.actualCost) || 0,
@@ -237,21 +201,25 @@ function addMaintenance(data) {
       Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy/MM/dd'),
       false
     ]);
-
-    safeLogActivity_('إضافة', 'صيانة', (data.building || '') + ' - ' + String(data.description || '').substring(0, 50));
+    SpreadsheetApp.flush();
+    try { logActivity(username, 'إضافة', 'صيانة', (data.building || '') + ' - ' + String(data.description || '').substring(0, 50)); } catch(e) {}
     return { success: true, message: 'تم إضافة طلب الصيانة' };
-  } catch (e) {
-    return { error: e.message };
-  }
+  });
 }
 
 function updateMaintenance(rowNum, data) {
-  try {
-    var auth = requireMaintenancePerm_('maintenance.edit'); if (auth) return auth;
-    data = data || {};
+  var auth = requireMaintenancePerm_('maintenance.edit'); if (auth) return auth;
+  data = data || {};
+
+  return withLock_(function() {
     var sheet = ensureMaintenanceSheet_();
     var maxRow = sheet.getLastRow();
-    if (rowNum < 2 || rowNum > maxRow) return { error: 'رقم الصف غير صحيح' };
+    rowNum = parseInt(rowNum, 10);
+    if (!rowNum || rowNum < 2 || rowNum > maxRow) return { error: 'رقم الصف غير صحيح' };
+
+    // لا نسمح بتعديل صف محذوف
+    var deleted = sheet.getRange(rowNum, 15).getValue();
+    if (deleted === true || deleted === 'TRUE') return { error: 'هذا الطلب محذوف ولا يمكن تعديله' };
 
     sheet.getRange(rowNum, 1, 1, 12).setValues([[
       data.date        || '',
@@ -267,26 +235,30 @@ function updateMaintenance(rowNum, data) {
       data.status      || 'جديد',
       data.notes       || ''
     ]]);
-
-    safeLogActivity_('تعديل', 'صيانة', (data.building || '') + ' - ' + String(data.description || '').substring(0, 50));
+    SpreadsheetApp.flush();
+    var username = currentUser() || 'نظام';
+    try { logActivity(username, 'تعديل', 'صيانة', (data.building || '') + ' - ' + String(data.description || '').substring(0, 50)); } catch(e) {}
     return { success: true, message: 'تم تحديث طلب الصيانة' };
-  } catch (e) {
-    return { error: e.message };
-  }
+  });
 }
 
 function deleteMaintenance(rowNum) {
-  try {
-    var auth = requireMaintenancePerm_('maintenance.delete'); if (auth) return auth;
+  var auth = requireMaintenancePerm_('maintenance.delete'); if (auth) return auth;
+
+  return withLock_(function() {
     var sheet  = ensureMaintenanceSheet_();
     var maxRow = sheet.getLastRow();
-    if (rowNum < 2 || rowNum > maxRow) return { error: 'رقم الصف غير صحيح' };
+    rowNum = parseInt(rowNum, 10);
+    if (!rowNum || rowNum < 2 || rowNum > maxRow) return { error: 'رقم الصف غير صحيح' };
+
+    // تجاهل إذا كان محذوفاً مسبقاً
+    var alreadyDeleted = sheet.getRange(rowNum, 15).getValue();
+    if (alreadyDeleted === true || alreadyDeleted === 'TRUE') return { error: 'هذا الطلب محذوف بالفعل' };
 
     sheet.getRange(rowNum, 15).setValue(true);
-
-    safeLogActivity_('حذف', 'صيانة', 'طلب صيانة صف ' + rowNum);
+    SpreadsheetApp.flush();
+    var username = currentUser() || 'نظام';
+    try { logActivity(username, 'حذف', 'صيانة', 'طلب صيانة صف ' + rowNum); } catch(e) {}
     return { success: true, message: 'تم حذف طلب الصيانة' };
-  } catch (e) {
-    return { error: e.message };
-  }
+  });
 }
