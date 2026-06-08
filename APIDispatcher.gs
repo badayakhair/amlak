@@ -67,6 +67,15 @@ function apiNormalizeSession_(sessionRaw) {
     if (session && Array.isArray(session.perms) && typeof expandPerms_ === 'function') {
       session.perms = expandPerms_(session.perms);
     }
+    // من لديه صلاحية إضافة/تعديل الصيانة يحتاج قراءة المباني والمستأجرين لاختيارهم في المودال
+    if (session && Array.isArray(session.perms)) {
+      var p = session.perms;
+      if (p.indexOf('maintenance.add') >= 0 || p.indexOf('maintenance.edit') >= 0) {
+        if (p.indexOf('buildings.view') < 0) p.push('buildings.view');
+        if (p.indexOf('tenants.view')   < 0) p.push('tenants.view');
+        if (p.indexOf('contracts.view') < 0) p.push('contracts.view');
+      }
+    }
     return JSON.stringify(session);
   } catch (e) {
     return sessionRaw;
