@@ -370,8 +370,9 @@ function renderDashboard() {
   document.getElementById('m-nopay').textContent  = c.noPay;
   document.getElementById('m-rate').textContent   = canFinance ? (f.collectRate+'%') : 'محجوب';
 
-  // Buildings — محسوبة من S.buildings و S.contracts مباشرة
-  // (نفس منطق صفحة المباني لضمان تطابق الأرقام بين الواجهتين وبين المستخدمين)
+  // Buildings — القائمة دائماً من byBuilding (يضمن الظهور لجميع المستخدمين)
+  // القيم: تُحسَب محلياً إن توفرت البيانات (buildings.view + contracts.view)،
+  //        وإلا تُستخدم قيم الخادم (للمستخدمين ذوي الصلاحيات المحدودة)
   var _dashOcc = {};
   (S.contracts || []).forEach(function(c) {
     var bn = String(c.building || '').trim();
@@ -383,16 +384,24 @@ function renderDashboard() {
     }
   });
   const bc = document.getElementById('bldgCards'); bc.innerHTML='';
-  (S.buildings || []).forEach(function(b) {
-    var bName = String(b.name || '').trim();
-    if (!bName) return;
-    var bs = _dashOcc[bName];
-    var totalU = b.totalUnits > 0 ? b.totalUnits : (bs ? bs.occ.size + bs.noUnit : 0);
-    var occ   = bs ? bs.occ.size + bs.noUnit : 0;
-    var vac   = Math.max(0, totalU - occ);
-    var pct   = totalU > 0 ? Math.round(occ / totalU * 100) : 0;
+  Object.entries(S.stats.byBuilding).forEach(function(entry) {
+    var name = entry[0], d = entry[1];
+    var bldg = (S.buildings || []).find(function(b){ return b.name === name; });
+    var bs   = _dashOcc[name];
+    // إذا توفر سجل المبنى المحلي نستخدم قيمة الوحدات الكلية من جدول المباني،
+    // وإلا نعتمد على ما حسبه الخادم (مستخدمون بدون buildings.view)
+    var totalU, occ;
+    if (bldg && bldg.totalUnits > 0) {
+      totalU = bldg.totalUnits;
+      occ    = bs ? bs.occ.size + bs.noUnit : d.occupiedUnits;
+    } else {
+      totalU = d.totalUnits;
+      occ    = d.occupiedUnits;
+    }
+    var vac = Math.max(0, totalU - occ);
+    var pct = totalU > 0 ? Math.round(occ / totalU * 100) : 0;
     bc.innerHTML += `<div class="bldg-card" style="margin-bottom:8px">
-      <div class="bldg-name">${bName}</div>
+      <div class="bldg-name">${name}</div>
       <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
         <span>مشغول: <strong style="color:var(--green)">${occ}</strong> / ${totalU}</span>
         <span>فارغ: <strong style="color:var(--red)">${vac}</strong></span>
