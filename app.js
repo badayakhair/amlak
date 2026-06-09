@@ -370,36 +370,18 @@ function renderDashboard() {
   document.getElementById('m-nopay').textContent  = c.noPay;
   document.getElementById('m-rate').textContent   = canFinance ? (f.collectRate+'%') : 'محجوب';
 
-  // Buildings — القائمة دائماً من byBuilding (يضمن الظهور لجميع المستخدمين)
-  // القيم: تُحسَب محلياً إن توفرت البيانات (buildings.view + contracts.view)،
-  //        وإلا تُستخدم قيم الخادم (للمستخدمين ذوي الصلاحيات المحدودة)
-  var _dashOcc = {};
-  (S.contracts || []).forEach(function(c) {
-    var bn = String(c.building || '').trim();
-    if (!bn) return;
-    if (!_dashOcc[bn]) _dashOcc[bn] = { occ: new Set(), noUnit: 0 };
-    if (c.status === CONTRACT_STATUS.ACTIVE || isExpiring_(c.status)) {
-      if (c.unit) _dashOcc[bn].occ.add(String(c.unit));
-      else _dashOcc[bn].noUnit++;
-    }
-  });
+  // Buildings
+  // totalUnits: من جدول المباني المحلي إن توفر (نفس مصدر صفحة المباني → تطابق ضمان)
+  // occupiedUnits: من الخادم مباشرة (تجنب إعادة حساب قد تختلف)
   const bc = document.getElementById('bldgCards'); bc.innerHTML='';
   Object.entries(S.stats.byBuilding).forEach(function(entry) {
     var name = entry[0], d = entry[1];
-    var bldg = (S.buildings || []).find(function(b){ return b.name === name; });
-    var bs   = _dashOcc[name];
-    // إذا توفر سجل المبنى المحلي نستخدم قيمة الوحدات الكلية من جدول المباني،
-    // وإلا نعتمد على ما حسبه الخادم (مستخدمون بدون buildings.view)
-    var totalU, occ;
-    if (bldg && bldg.totalUnits > 0) {
-      totalU = bldg.totalUnits;
-      occ    = bs ? bs.occ.size + bs.noUnit : d.occupiedUnits;
-    } else {
-      totalU = d.totalUnits;
-      occ    = d.occupiedUnits;
-    }
-    var vac = Math.max(0, totalU - occ);
-    var pct = totalU > 0 ? Math.round(occ / totalU * 100) : 0;
+    var nameTrimmed = String(name).trim();
+    var bldg = (S.buildings || []).find(function(b){ return String(b.name||'').trim() === nameTrimmed; });
+    var totalU = (bldg && bldg.totalUnits > 0) ? bldg.totalUnits : d.totalUnits;
+    var occ    = d.occupiedUnits;
+    var vac    = Math.max(0, totalU - occ);
+    var pct    = totalU > 0 ? Math.round(occ / totalU * 100) : 0;
     bc.innerHTML += `<div class="bldg-card" style="margin-bottom:8px">
       <div class="bldg-name">${name}</div>
       <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
