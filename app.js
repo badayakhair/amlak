@@ -1575,30 +1575,36 @@ function checkSession() {
   var tokenAtCheck = localStorage.getItem('AMLAAK_TOKEN');
   google.script.run
     .withSuccessHandler(r => {
-      // إذا كان المستخدم في منتصف تسجيل دخول جديد، تجاهل نتيجة whoami القديمة
-      if (_loginInProgress) return;
+      // إذا تغيّر التوكن يعني تسجيل دخول جديد تمّ في الأثناء — تجاهل تام
+      const curToken = localStorage.getItem('AMLAAK_TOKEN');
+      if (_loginInProgress || (curToken && curToken !== tokenAtCheck)) return;
       if (r && r.loggedIn) {
         _currentUser = r;
         showMainUI();
         if (r.warning) toast(r.warning, 'err');
       } else {
-        // لا تحذف التوكن إلا إذا لم يتغير (أي لم يحدث تسجيل دخول جديد في الأثناء)
-        if (localStorage.getItem('AMLAAK_TOKEN') === tokenAtCheck) {
-          localStorage.removeItem('AMLAAK_TOKEN');
-        }
+        if (curToken === tokenAtCheck) localStorage.removeItem('AMLAAK_TOKEN');
         showLoginScreen();
       }
     })
-    .withFailureHandler(() => { if (!_loginInProgress) showLoginScreen(); })
+    .withFailureHandler(() => {
+      const curToken = localStorage.getItem('AMLAAK_TOKEN');
+      if (_loginInProgress || (curToken && curToken !== tokenAtCheck)) return;
+      if (!curToken || curToken === tokenAtCheck) {
+        if (curToken) localStorage.removeItem('AMLAAK_TOKEN');
+        showLoginScreen();
+      }
+    })
     .whoami();
 }
 
 function showLoginScreen() {
   const overlay = document.getElementById('loginOverlay');
+  if (!overlay) return; // قد تُستدعى قبل اكتمال تحليل HTML — تجاهل آمن
   overlay.style.display = 'flex';
   overlay.style.alignItems = 'center';
   overlay.style.justifyContent = 'center';
-  setTimeout(() => document.getElementById('loginUsername').focus(), 100);
+  setTimeout(() => { const f = document.getElementById('loginUsername'); if (f) f.focus(); }, 100);
 }
 
 function showMainUI() {
