@@ -226,11 +226,17 @@ function applyAllData_(d) {
   renderDashboard(); renderDashAlerts(); populateAllSelects(); renderContracts(); renderManage(); renderBuildingsTable(); populateMapSelect(); populateAdminArchiveBuildingSelect(); renderTenants(); renderTopbarAlerts_(d.topbarAlerts);
 }
 function loadData() {
+  // نحفظ التوكن الحالي لنتجاهل الردود القديمة التي تعود بعد تغيير الجلسة
+  var myToken = localStorage.getItem('AMLAAK_TOKEN');
   const lb = document.getElementById('loadingBanner');
   if (lb) lb.style.display = 'flex';
   google.script.run
-    .withSuccessHandler(applyAllData_)
-    .withFailureHandler(e => {
+    .withSuccessHandler(function(d) {
+      if (localStorage.getItem('AMLAAK_TOKEN') !== myToken) return;
+      applyAllData_(d);
+    })
+    .withFailureHandler(function(e) {
+      if (localStorage.getItem('AMLAAK_TOKEN') !== myToken) return;
       if (lb) lb.style.display = 'none';
       toast('خطأ تحميل البيانات: '+e.message,'err');
     })
@@ -1679,6 +1685,12 @@ function doLogin() {
       _loginInProgress = false;
       btn.disabled = false; btn.textContent = 'تسجيل الدخول';
       if (r && r.success) {
+        // تحقق مزدوج: يجب أن يكون المستخدم موجوداً والتوكن محفوظاً
+        if (!r.user || !localStorage.getItem('AMLAAK_TOKEN')) {
+          errEl.textContent = 'خطأ داخلي في الخادم، حاول مجدداً';
+          errEl.style.display = 'block';
+          return;
+        }
         _currentUser = r.user;
         document.getElementById('loginPassword').value = '';
         showMainUI();
@@ -1700,6 +1712,7 @@ function doLogin() {
 
 function resetClientStateAfterLogout() {
   _currentUser = null;
+  _loginInProgress = false;
   S = { contracts:[], buildings:[], tenants:[], stats:null, loaded:false, dueAlerts:[] };
   _allUsers = [];
   _activityData = [];
