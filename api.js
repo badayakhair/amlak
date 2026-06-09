@@ -48,7 +48,13 @@
       }
 
       if (action === 'logout') {
-        localStorage.removeItem('AMLAAK_TOKEN');
+        // احذف التوكن فقط إذا لم يتغيّر منذ إرسال الطلب
+        // (يمنع حذف توكن مستخدم جديد سجّل دخوله قبل وصول رد الخروج)
+        if (token && localStorage.getItem('AMLAAK_TOKEN') === token) {
+          localStorage.removeItem('AMLAAK_TOKEN');
+        } else if (!token) {
+          localStorage.removeItem('AMLAAK_TOKEN');
+        }
       }
 
       if (ok) ok(res);
