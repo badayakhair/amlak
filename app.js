@@ -202,6 +202,8 @@ checkSession();
 // ── Data loading ──────────────────────────────
 
 function applyAllData_(d) {
+  const lb = document.getElementById('loadingBanner');
+  if (lb) lb.style.display = 'none';
   if (!d || d.error) {
     if (d && d.error) {
       var msg = String(d.error);
@@ -224,9 +226,14 @@ function applyAllData_(d) {
   renderDashboard(); renderDashAlerts(); populateAllSelects(); renderContracts(); renderManage(); renderBuildingsTable(); populateMapSelect(); populateAdminArchiveBuildingSelect(); renderTenants(); renderTopbarAlerts_(d.topbarAlerts);
 }
 function loadData() {
+  const lb = document.getElementById('loadingBanner');
+  if (lb) lb.style.display = 'flex';
   google.script.run
     .withSuccessHandler(applyAllData_)
-    .withFailureHandler(e => toast('خطأ تحميل البيانات: '+e.message,'err'))
+    .withFailureHandler(e => {
+      if (lb) lb.style.display = 'none';
+      toast('خطأ تحميل البيانات: '+e.message,'err');
+    })
     .getAllData();
 }
 
@@ -1556,6 +1563,7 @@ function renderFinance(data) {
 // تسجيل الدخول والصلاحيات
 // ═══════════════════════════════════════════════
 let _currentUser = null;
+let _loginInProgress = false;
 
 function checkSession() {
   // بدون توكن نعرف مباشرة أن المستخدم غير مسجَّل — لا حاجة لسؤال الخادم
@@ -1563,18 +1571,25 @@ function checkSession() {
     showLoginScreen();
     return;
   }
+  // نحفظ التوكن الحالي لمقارنته لاحقاً — إذا تغيّر يعني المستخدم سجّل دخولاً جديداً
+  var tokenAtCheck = localStorage.getItem('AMLAAK_TOKEN');
   google.script.run
     .withSuccessHandler(r => {
+      // إذا كان المستخدم في منتصف تسجيل دخول جديد، تجاهل نتيجة whoami القديمة
+      if (_loginInProgress) return;
       if (r && r.loggedIn) {
         _currentUser = r;
         showMainUI();
         if (r.warning) toast(r.warning, 'err');
       } else {
-        localStorage.removeItem('AMLAAK_TOKEN');
+        // لا تحذف التوكن إلا إذا لم يتغير (أي لم يحدث تسجيل دخول جديد في الأثناء)
+        if (localStorage.getItem('AMLAAK_TOKEN') === tokenAtCheck) {
+          localStorage.removeItem('AMLAAK_TOKEN');
+        }
         showLoginScreen();
       }
     })
-    .withFailureHandler(() => showLoginScreen())
+    .withFailureHandler(() => { if (!_loginInProgress) showLoginScreen(); })
     .whoami();
 }
 
@@ -1652,19 +1667,23 @@ function doLogin() {
   }
   const btn = document.getElementById('loginBtn');
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span> جارٍ التحقق...';
+  _loginInProgress = true;
   google.script.run
     .withSuccessHandler(r => {
+      _loginInProgress = false;
       btn.disabled = false; btn.textContent = 'تسجيل الدخول';
-      if (r.success) {
+      if (r && r.success) {
         _currentUser = r.user;
         document.getElementById('loginPassword').value = '';
         showMainUI();
+        if (r.warning) toast(r.warning, 'warn');
       } else {
-        errEl.textContent = r.error || 'فشل تسجيل الدخول';
+        errEl.textContent = (r && r.error) || 'فشل تسجيل الدخول';
         errEl.style.display = 'block';
       }
     })
     .withFailureHandler(e => {
+      _loginInProgress = false;
       btn.disabled = false; btn.textContent = 'تسجيل الدخول';
       errEl.textContent = 'خطأ: ' + e.message;
       errEl.style.display = 'block';
