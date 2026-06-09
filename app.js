@@ -192,7 +192,7 @@ function hasPerm(perm) {
 
 // ── State
 // ── State ─────────────────────────────────────
-let S = { contracts:[], buildings:[], tenants:[], maintenanceList:[], stats:null, loaded:false };
+let S = { contracts:[], buildings:[], tenants:[], maintenanceList:[], stats:null, loaded:false, dueAlerts:[] };
 
 // ── Init ──────────────────────────────────────
 document.getElementById('topDate').textContent = new Date().toLocaleDateString('ar-SA',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
@@ -370,17 +370,35 @@ function renderDashboard() {
   document.getElementById('m-nopay').textContent  = c.noPay;
   document.getElementById('m-rate').textContent   = canFinance ? (f.collectRate+'%') : 'محجوب';
 
-  // Buildings
+  // Buildings — محسوبة من S.buildings و S.contracts مباشرة
+  // (نفس منطق صفحة المباني لضمان تطابق الأرقام بين الواجهتين وبين المستخدمين)
+  var _dashOcc = {};
+  (S.contracts || []).forEach(function(c) {
+    var bn = String(c.building || '').trim();
+    if (!bn) return;
+    if (!_dashOcc[bn]) _dashOcc[bn] = { occ: new Set(), noUnit: 0 };
+    if (c.status === CONTRACT_STATUS.ACTIVE || isExpiring_(c.status)) {
+      if (c.unit) _dashOcc[bn].occ.add(String(c.unit));
+      else _dashOcc[bn].noUnit++;
+    }
+  });
   const bc = document.getElementById('bldgCards'); bc.innerHTML='';
-  Object.entries(S.stats.byBuilding).forEach(([name,d])=>{
-    bc.innerHTML+=`<div class="bldg-card" style="margin-bottom:8px">
-      <div class="bldg-name">${name}</div>
+  (S.buildings || []).forEach(function(b) {
+    var bName = String(b.name || '').trim();
+    if (!bName) return;
+    var bs = _dashOcc[bName];
+    var totalU = b.totalUnits > 0 ? b.totalUnits : (bs ? bs.occ.size + bs.noUnit : 0);
+    var occ   = bs ? bs.occ.size + bs.noUnit : 0;
+    var vac   = Math.max(0, totalU - occ);
+    var pct   = totalU > 0 ? Math.round(occ / totalU * 100) : 0;
+    bc.innerHTML += `<div class="bldg-card" style="margin-bottom:8px">
+      <div class="bldg-name">${bName}</div>
       <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
-        <span>مشغول: <strong style="color:var(--green)">${d.occupiedUnits}</strong> / ${d.totalUnits}</span>
-        <span>فارغ: <strong style="color:var(--red)">${d.vacantUnits}</strong></span>
-        <span class="badge b-${d.occupancyPct>=70?'green':d.occupancyPct>=40?'amber':'red'}">${d.occupancyPct}%</span>
+        <span>مشغول: <strong style="color:var(--green)">${occ}</strong> / ${totalU}</span>
+        <span>فارغ: <strong style="color:var(--red)">${vac}</strong></span>
+        <span class="badge b-${pct>=70?'green':pct>=40?'amber':'red'}">${pct}%</span>
       </div>
-      <div class="progress"><div class="progress-fill" style="width:${d.occupancyPct}%"></div></div>
+      <div class="progress"><div class="progress-fill" style="width:${pct}%"></div></div>
     </div>`;
   });
 
@@ -1713,7 +1731,7 @@ function doLogin() {
 function resetClientStateAfterLogout() {
   _currentUser = null;
   _loginInProgress = false;
-  S = { contracts:[], buildings:[], tenants:[], stats:null, loaded:false, dueAlerts:[] };
+  S = { contracts:[], buildings:[], tenants:[], maintenanceList:[], stats:null, loaded:false, dueAlerts:[] };
   _allUsers = [];
   _activityData = [];
   _smsContext = null;
