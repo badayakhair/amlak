@@ -41,6 +41,10 @@ function handleApiJsonp_(e) {
 function sendToBuildingActiveCustom(bldg, msg) {
   var total = { sent: 0, failed: 0 };
   var statuses = ['ساري', 'شارف على الانتهاء', 'تشارف انتهاء'];
+  // فحص صلاحية صريح (دفاع في العمق): لا نعتمد فقط على فحص sendToBuildingCustom الداخلي
+  if (typeof requirePerm_ === 'function') {
+    var permErr = requirePerm_('sms.send'); if (permErr) return permErr;
+  }
   if (typeof sendToBuildingCustom !== 'function') {
     return { error: 'الدالة sendToBuildingCustom غير متوفرة' };
   }

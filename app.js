@@ -243,6 +243,16 @@ function loadData() {
     .getAllData();
 }
 
+// يلتقط التوكن الحالي وقت إرسال الطلب، ويتجاهل أي رد يعود بعد تغيّر الجلسة
+// (تسجيل خروج أو دخول مستخدم آخر) حتى لا تُعرض بيانات مستخدم سابق.
+function freshGuard_(fn) {
+  var myToken = localStorage.getItem('AMLAAK_TOKEN');
+  return function (d) {
+    if (localStorage.getItem('AMLAAK_TOKEN') !== myToken) return;
+    fn(d);
+  };
+}
+
 // ── Silent refresh — تحديث في الخلفية ──
 
 // ── AI Model Management ──────────────────────
@@ -277,7 +287,7 @@ function changeAIModel() {
 
 function silentRefresh() {
   google.script.run
-    .withSuccessHandler(applyAllData_)
+    .withSuccessHandler(freshGuard_(applyAllData_))
     .withFailureHandler(()=>{})
     .getAllData();
   // إذا كان قسم المالية مفتوحاً أعد تحميله لأنه يعتمد على API منفصل
@@ -346,8 +356,8 @@ function renderDashAlerts() {
     return `<div class="alert-item">
       <div class="dot ${cls}"></div>
       <div style="flex:1">
-        <div style="font-size:13px;font-weight:500">${d.tenant} — ${d.building} ${d.unit}</div>
-        <div style="font-size:11px;color:#718096">${d.schedule} | استحقاق: ${d.dueDate} | ${lbl} | ${nf(d.rent)} ر.س</div>
+        <div style="font-size:13px;font-weight:500">${escHtml(d.tenant)} — ${escHtml(d.building)} ${escHtml(d.unit)}</div>
+        <div style="font-size:11px;color:#718096">${escHtml(d.schedule)} | استحقاق: ${escHtml(d.dueDate)} | ${lbl} | ${nf(d.rent)} ر.س</div>
       </div>
       ${smsButtonHtml('SMS', d.tenant, d.phone, d.rent||0, '', 'padding:3px 8px;font-size:11px')}
     </div>`;
@@ -356,7 +366,7 @@ function renderDashAlerts() {
 
 function renderDashboard() {
   if (!S.stats) return;
-  const c=S.stats.counts, f=S.stats.financials;
+  const c=S.stats.counts||{}, f=S.stats.financials||{};
   const canFinance = hasPerm('finance.view') && S.stats.canViewFinance !== false;
   document.getElementById('m-active').textContent = c.active;
   document.getElementById('m-exp').textContent    = c.expiring;
@@ -374,7 +384,7 @@ function renderDashboard() {
   // totalUnits: من جدول المباني المحلي إن توفر (نفس مصدر صفحة المباني → تطابق ضمان)
   // occupiedUnits: من الخادم مباشرة (تجنب إعادة حساب قد تختلف)
   const bc = document.getElementById('bldgCards'); bc.innerHTML='';
-  Object.entries(S.stats.byBuilding).forEach(function(entry) {
+  Object.entries(S.stats.byBuilding||{}).forEach(function(entry) {
     var name = entry[0], d = entry[1];
     var nameTrimmed = String(name).trim();
     var bldg = (S.buildings || []).find(function(b){ return String(b.name||'').trim() === nameTrimmed; });
@@ -383,7 +393,7 @@ function renderDashboard() {
     var vac    = Math.max(0, totalU - occ);
     var pct    = totalU > 0 ? Math.round(occ / totalU * 100) : 0;
     bc.innerHTML += `<div class="bldg-card" style="margin-bottom:8px">
-      <div class="bldg-name">${name}</div>
+      <div class="bldg-name">${escHtml(name)}</div>
       <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
         <span>مشغول: <strong style="color:var(--green)">${occ}</strong> / ${totalU}</span>
         <span>فارغ: <strong style="color:var(--red)">${vac}</strong></span>
@@ -395,23 +405,25 @@ function renderDashboard() {
 
   // Urgent
   const ul=document.getElementById('urgentList'); ul.innerHTML='';
-  if (!S.stats.urgentContracts.length) { ul.innerHTML='<div style="font-size:13px;color:#718096;padding:6px 0">لا توجد عقود عاجلة ✅</div>'; }
-  S.stats.urgentContracts.forEach(c=>{
+  const _urgent = S.stats.urgentContracts || [];
+  if (!_urgent.length) { ul.innerHTML='<div style="font-size:13px;color:#718096;padding:6px 0">لا توجد عقود عاجلة ✅</div>'; }
+  _urgent.forEach(c=>{
     const d=c.daysLeft, cls=d<0||d<15?'dot-r':'dot-a';
     const lbl=d<0?`انتهى منذ ${Math.abs(d)} يوم`:d===0?'ينتهي اليوم!':d+' يوم';
     ul.innerHTML+=`<div class="alert-item"><div class="dot ${cls}"></div><div>
-      <div style="font-size:13px;font-weight:500">${c.tenant}</div>
-      <div style="font-size:11px;color:#718096">${c.building} — شقة ${c.unit} | ${lbl}
+      <div style="font-size:13px;font-weight:500">${escHtml(c.tenant)}</div>
+      <div style="font-size:11px;color:#718096">${escHtml(c.building)} — شقة ${escHtml(c.unit)} | ${lbl}
         ${smsButtonHtml('SMS', c.tenant, c.phone, c.rent||0, 'تنبيه قرب انتهاء عقد', 'margin-right:6px;padding:2px 7px;font-size:11px')}
       </div></div></div>`;
   });
 
   // NoPay
   const np=document.getElementById('noPayList'); np.innerHTML='';
-  if (!S.stats.noPayContracts.length) { np.innerHTML='<div style="font-size:13px;color:var(--green);padding:6px 0">✅ جميع المستأجرين سددوا</div>'; return; }
+  const _noPay = S.stats.noPayContracts || [];
+  if (!_noPay.length) { np.innerHTML='<div style="font-size:13px;color:var(--green);padding:6px 0">✅ جميع المستأجرين سددوا</div>'; return; }
   np.innerHTML=`<div class="tbl-wrap"><table><thead><tr><th>المستأجر</th><th>المبنى</th><th>شقة</th><th>الإيجار</th><th>إجراء</th></tr></thead><tbody>
-    ${S.stats.noPayContracts.map(c=>`<tr>
-      <td><strong>${c.tenant}</strong></td><td>${c.building}</td><td>${c.unit}</td>
+    ${_noPay.map(c=>`<tr>
+      <td><strong>${escHtml(c.tenant)}</strong></td><td>${escHtml(c.building)}</td><td>${escHtml(c.unit)}</td>
       <td><strong style="color:var(--red)">${nf(c.rent)} ر.س</strong></td>
       <td>${smsButtonHtml('تذكير SMS', c.tenant, c.phone, c.rent||0, 'تذكير بسداد الإيجار')}</td>
     </tr>`).join('')}
@@ -442,6 +454,7 @@ function loadBuildingMap() {
 
 function renderBuildingMap(data) {
   document.getElementById('mapTitle').textContent = `🏢 ${data.buildingName} — ${data.units.length} وحدة`;
+  // ملاحظة: mapTitle يستخدم textContent (آمن) — لكن خلايا الوحدات أدناه تُبنى بـ innerHTML وتُهرَّب.
 
   const occ = data.units.filter(
   u => u.status === 'مشغولة'
@@ -467,7 +480,7 @@ const exp = data.units.filter(
     const cls = u.status==='مشغولة'?'unit-occ':_isExp?'unit-exp':'unit-vac';
     const lbl = u.status==='مشغولة'?'مشغولة':_isExp?'قريب انتهاء':'فارغة';
     grid.innerHTML+=`<div class="unit-cell ${cls}" onclick="showUnitDetail('${esc(u.unit)}','${esc(data.buildingName)}')">
-      <div class="unit-num">${u.unit}</div>
+      <div class="unit-num">${escHtml(u.unit)}</div>
       <div class="unit-lbl">${lbl}</div>
       ${u.daysLeft!==null&&u.daysLeft<=30?`<div style="font-size:9px;margin-top:1px">${u.daysLeft}ي</div>`:''}
     </div>`;
@@ -488,13 +501,13 @@ function showUnitDetail(unit, building) {
   let html = '';
   if (u && u.status!=='فارغة') {
     html+=`<div style="background:var(--gray-l);border-radius:8px;padding:12px;margin-bottom:12px;font-size:13px">
-      <div style="font-weight:600;font-size:14px;margin-bottom:6px">${u.tenant}</div>
+      <div style="font-weight:600;font-size:14px;margin-bottom:6px">${escHtml(u.tenant)}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;color:#718096">
-        <div>الجوال: <strong>${u.phone||'—'}</strong></div>
+        <div>الجوال: <strong>${escHtml(u.phone)||'—'}</strong></div>
         <div>الإيجار: <strong>${nf(u.rent)} ر.س</strong></div>
-        <div>نهاية العقد: <strong>${u.end||'—'}</strong></div>
+        <div>نهاية العقد: <strong>${escHtml(u.end)||'—'}</strong></div>
         <div>الأيام المتبقية: <strong style="color:${u.daysLeft<0?'var(--red)':u.daysLeft<30?'var(--amber)':'var(--green)'}">${u.daysLeft!==null?u.daysLeft+' يوم':'—'}</strong></div>
-        <div>النوع: <strong>${u.type||'—'}</strong></div>
+        <div>النوع: <strong>${escHtml(u.type)||'—'}</strong></div>
       </div>
       ${smsButtonHtml('إرسال SMS', u.tenant, u.phone, u.rent||0, '', 'margin-top:8px')}
     </div>`;
@@ -512,8 +525,8 @@ function showUnitDetail(unit, building) {
       const dotCls = h.status==='ساري'?'tl-dot-green':h.status==='منتهي'?'tl-dot-gray':'tl-dot-amber';
       html+=`<div class="tl-item"><div class="tl-dot ${dotCls}"></div>
         <div class="tl-content">
-          <div style="font-weight:500">${h.tenant}</div>
-          <div style="font-size:11px;color:#718096;margin-top:3px">${h.start||'—'} ← ${h.end||'—'} | ${nf(h.rent)} ر.س | ${statusBadge(h.status)}</div>
+          <div style="font-weight:500">${escHtml(h.tenant)}</div>
+          <div style="font-size:11px;color:#718096;margin-top:3px">${escHtml(h.start)||'—'} ← ${escHtml(h.end)||'—'} | ${nf(h.rent)} ر.س | ${statusBadge(h.status)}</div>
         </div></div>`;
     });
     html+='</div>';
@@ -538,8 +551,8 @@ function renderContracts() {
     const d=c.daysLeft, typeBadge=c.type==='تجاري'?'<span class="badge b-amber">تجاري</span>':'<span class="badge b-blue">سكني</span>';
     const dLabel=d===null?'—':d<0?`<span style="color:var(--red);font-weight:600">${d}</span>`:d<=30?`<span style="color:var(--amber);font-weight:600">${d}</span>`:d;
     const pctColor=c.payPct===100?'var(--green)':c.payPct===0&&c.rent>0?'var(--red)':c.payPct<50?'var(--amber)':'inherit';
-    return `<tr><td><strong>${c.tenant}</strong></td><td>${c.building}</td><td>${c.unit}</td><td>${typeBadge}</td>
-      <td style="font-size:12px">${c.end||'—'}</td><td style="text-align:center">${dLabel}</td>
+    return `<tr><td><strong>${escHtml(c.tenant)}</strong></td><td>${escHtml(c.building)}</td><td>${escHtml(c.unit)}</td><td>${typeBadge}</td>
+      <td style="font-size:12px">${escHtml(c.end)||'—'}</td><td style="text-align:center">${dLabel}</td>
       <td>${c.rent?nf(c.rent)+' ر.س':'—'}</td>
       <td>${c.paid?nf(c.paid):c.rent>0?'<span style="color:var(--red)">0</span>':'—'}</td>
       <td style="color:${pctColor};font-weight:500;text-align:center">${c.rent>0?c.payPct+'%':'—'}</td>
@@ -577,9 +590,9 @@ function renderManage() {
   const tbody=document.getElementById('manageBody');
   tbody.innerHTML=filtered.map(c=>{
     const typeBadge=c.type==='تجاري'?'<span class="badge b-amber">تجاري</span>':'<span class="badge b-blue">سكني</span>';
-    return `<tr><td><strong>${c.tenant}</strong></td>
-      <td style="direction:ltr;text-align:left;font-size:12px">${c.phone||'—'}</td>
-      <td>${c.building}</td><td>${c.unit}</td><td>${typeBadge}</td>
+    return `<tr><td><strong>${escHtml(c.tenant)}</strong></td>
+      <td style="direction:ltr;text-align:left;font-size:12px">${escHtml(c.phone)||'—'}</td>
+      <td>${escHtml(c.building)}</td><td>${escHtml(c.unit)}</td><td>${typeBadge}</td>
       <td>${c.rent?nf(c.rent):'-'}</td>
       <td style="color:${c.payPct===100?'var(--green)':c.paid===0&&c.rent>0?'var(--red)':'inherit'}">${c.paid?nf(c.paid):c.rent>0?'<span style="color:var(--red)">0</span>':'-'}</td>
       <td>${statusBadge(c.status)}</td>
@@ -604,13 +617,13 @@ function renderTenants() {
 
   const data=S.tenants.filter(t=>(!q||t.name.toLowerCase().includes(q)||t.phone.includes(q)||(t.idNo&&t.idNo.includes(q)))&&(!st||t.lastStatus===st));
   document.getElementById('tenantsBody').innerHTML=data.map(t=>`<tr>
-    <td><strong>${t.name}</strong></td>
-    <td style="direction:ltr;text-align:left;font-size:12px">${t.idNo||'—'}</td>
-    <td style="direction:ltr;text-align:left;font-size:12px">${t.phone||'—'}</td>
+    <td><strong>${escHtml(t.name)}</strong></td>
+    <td style="direction:ltr;text-align:left;font-size:12px">${escHtml(t.idNo)||'—'}</td>
+    <td style="direction:ltr;text-align:left;font-size:12px">${escHtml(t.phone)||'—'}</td>
     <td style="text-align:center"><strong style="color:var(--blue)">${t.contractsCount}</strong></td>
-    <td>${t.lastBuilding||'—'}</td><td>${t.lastUnit||'—'}</td>
+    <td>${escHtml(t.lastBuilding)||'—'}</td><td>${escHtml(t.lastUnit)||'—'}</td>
     <td>${t.totalPaid?nf(t.totalPaid)+' ر.س':'—'}</td>
-    <td>${t.regularityScore||'—'}</td>
+    <td>${escHtml(t.regularityScore)||'—'}</td>
     <td>${statusBadge(t.lastStatus)}</td>
     <td><button class="btn btn-sm btn-primary" onclick="showTenantHistory('${esc(t.name)}')">السجل</button></td>
   </tr>`).join('')||'<tr><td colspan="9" style="text-align:center;padding:20px;color:#718096">لا توجد بيانات</td></tr>';
@@ -632,12 +645,12 @@ function showTenantHistory(name) {
         html+=`<div class="tl-item"><div class="tl-dot ${dotCls}"></div>
           <div class="tl-content">
             <div style="display:flex;justify-content:space-between;align-items:center">
-              <strong>${c.building} — شقة ${c.unit}</strong>${statusBadge(c.status)}
+              <strong>${escHtml(c.building)} — شقة ${escHtml(c.unit)}</strong>${statusBadge(c.status)}
             </div>
             <div style="font-size:11px;color:#718096;margin-top:4px">
-              ${c.start||'—'} ← ${c.end||'—'} &nbsp;|&nbsp; إيجار: ${nf(c.rent)} ر.س &nbsp;|&nbsp; مدفوع: ${nf(c.paid)} ر.س &nbsp;|&nbsp; ${c.type||'سكني'}
+              ${escHtml(c.start)||'—'} ← ${escHtml(c.end)||'—'} &nbsp;|&nbsp; إيجار: ${nf(c.rent)} ر.س &nbsp;|&nbsp; مدفوع: ${nf(c.paid)} ر.س &nbsp;|&nbsp; ${escHtml(c.type)||'سكني'}
             </div>
-            ${c.regularity?`<div style="font-size:11px;color:#718096;margin-top:2px">الانتظام: ${c.regularity}</div>`:''}
+            ${c.regularity?`<div style="font-size:11px;color:#718096;margin-top:2px">الانتظام: ${escHtml(c.regularity)}</div>`:''}
           </div></div>`;
       });
       html+='</div>';
@@ -675,13 +688,13 @@ function renderBuildingsTable() {
     const vac = Math.max(0, totalU - occ);
     const pct = totalU > 0 ? Math.round(occ / totalU * 100) : 0;
     return `<tr>
-      <td><strong>${b.name}</strong></td>
+      <td><strong>${escHtml(b.name)}</strong></td>
       <td>${b.type==='تجاري'?'<span class="badge b-amber">تجاري</span>':b.type==='مختلط'?'<span class="badge b-navy">مختلط</span>':'<span class="badge b-blue">سكني</span>'}</td>
       <td style="text-align:center">${b.totalUnits}</td><td style="text-align:center">${b.floors}</td>
       <td style="text-align:center;color:var(--green);font-weight:500">${occ}</td>
       <td style="text-align:center;color:var(--red);font-weight:500">${vac}</td>
       <td style="text-align:center"><span class="badge b-${pct>=70?'green':pct>=40?'amber':'red'}">${pct}%</span></td>
-      <td style="font-size:12px;color:#718096">${b.notes||'—'}</td>
+      <td style="font-size:12px;color:#718096">${escHtml(b.notes)||'—'}</td>
       <td><div style="display:flex;gap:4px">
         ${hasPerm('buildings.edit') ? `<button class="btn btn-sm btn-primary" onclick="openBuildingModal('edit',${b.row})">تعديل</button>` : ''}
         ${(hasPerm('users.manage') && hasPerm('buildings.delete')) ? `<button class="btn btn-sm btn-danger" onclick="archiveBuildingFromTable(${b.row},'${esc(b.name)}')">أرشفة</button>` : ''}
@@ -817,8 +830,13 @@ function savePayment() {
   const maxAmt=parseFloat(amtInput.dataset.maxAmount||'0');
   if(!amt||amt<=0||isNaN(amt)){toast('أدخل مبلغاً صحيحاً','err');return;}
   if(maxAmt>0&&amt>maxAmt){toast(`المبلغ المدخل (${nf(amt)} ر.س) يتجاوز المتبقي (${nf(maxAmt)} ر.س)`,'err');return;}
+  // حماية من الإرسال المزدوج: تعطيل الزر حتى يعود الرد (يمنع تسجيل دفعة مكررة)
+  const _payBtn=document.getElementById('paySaveBtn');
+  if(_payBtn){ if(_payBtn.disabled) return; _payBtn.disabled=true; _payBtn.dataset.lbl=_payBtn.textContent; _payBtn.innerHTML='<span class="spin"></span>جارٍ التسجيل...'; }
+  const _payRestore=()=>{ if(_payBtn){ _payBtn.disabled=false; _payBtn.textContent=_payBtn.dataset.lbl||'تسجيل'; } };
   google.script.run
     .withSuccessHandler(r=>{
+      _payRestore();
       if(r.error){toast('❌ '+r.error,'err');return;}
       document.getElementById('payResult').innerHTML=`<div class="result">✅ سُجّلت ${nf(amt)} ر.س | متبقي: ${nf(r.remaining)} ر.س</div>`;
       document.getElementById('payAmount').value='';
@@ -842,7 +860,7 @@ function savePayment() {
       }
       toast('✅ تم تسجيل الدفعة'); silentRefresh(); loadContractPaymentHistory(row);
     })
-    .withFailureHandler(e=>toast('خطأ: '+e.message,'err'))
+    .withFailureHandler(e=>{_payRestore();toast('خطأ: '+e.message,'err');})
     .addPayment(row,amt);
 }
 
@@ -940,11 +958,11 @@ function savePaymentEdit(contractRow) {
       // تحديث S.contracts محلياً بالقيم الجديدة
       if (contractRow && r.newPaid !== undefined) {
         const c = S.contracts.find(x => x.row === contractRow);
+        // احسب الفرق قبل تعديل c.paid (وإلا أصبح صفراً) واستخدمه للمستأجر والمالية معاً
+        const delta = c ? (Number(r.newPaid) - (Number(c.paid) || 0)) : 0;
         if (c) {
-          const oldPaid = c.paid;
           c.paid = r.newPaid;
           c.remaining = r.remaining !== undefined ? r.remaining : Math.max(0, (c.rent || 0) - c.paid);
-          const delta = c.paid - oldPaid;
           const t = S.tenants.find(x => x.name === c.tenant);
           if (t) t.totalPaid = (Number(t.totalPaid) || 0) + delta;
           renderContracts();
@@ -952,7 +970,6 @@ function savePaymentEdit(contractRow) {
         }
         if (S.stats && S.stats.financials) {
           const ff = S.stats.financials;
-          const delta = r.newPaid - (S.contracts.find(x=>x.row===contractRow)||{}).paid || 0;
           ff.totalPaid = (Number(ff.totalPaid) || 0) + delta;
           ff.remaining = Math.max(0, (Number(ff.remaining) || 0) - delta);
           renderDashboard();
@@ -1223,9 +1240,12 @@ function sendSingle(){
   const p=document.getElementById('singlePhone').value.trim();
   const m=document.getElementById('singleMsg').value.trim();
   if(!p||!m){toast('أدخل الرقم والرسالة','err');return;}
+  const _sBtn=document.getElementById('singleSendBtn');
+  if(_sBtn){ if(_sBtn.disabled) return; _sBtn.disabled=true; _sBtn.dataset.lbl=_sBtn.textContent; _sBtn.innerHTML='<span class="spin"></span>جارٍ الإرسال...'; }
+  const _sRestore=()=>{ if(_sBtn){ _sBtn.disabled=false; _sBtn.textContent=_sBtn.dataset.lbl||'إرسال'; } };
   google.script.run
-    .withSuccessHandler(r=>{document.getElementById('singleResult').innerHTML=`<div class="result ${r.success?'':'err'}">${r.success?'✅ أُرسلت':'❌ فشل'}</div>`;})
-    .withFailureHandler(e=>toast('خطأ: '+e.message,'err')).sendSingleSms(p,m);
+    .withSuccessHandler(r=>{_sRestore();document.getElementById('singleResult').innerHTML=`<div class="result ${r.success?'':'err'}">${r.success?'✅ أُرسلت':'❌ فشل'}</div>`;})
+    .withFailureHandler(e=>{_sRestore();toast('خطأ: '+e.message,'err');}).sendSingleSms(p,m);
 }
 
 // ── AI ────────────────────────────────────────
@@ -1255,7 +1275,7 @@ function loadLog(){
     .withSuccessHandler(rows=>{
       const tbody=document.getElementById('logBody');
       if(!rows.length){tbody.innerHTML='<tr><td colspan="6" style="text-align:center;padding:20px;color:#718096">لا توجد رسائل</td></tr>';return;}
-      tbody.innerHTML=rows.map(r=>`<tr><td style="font-size:12px;white-space:nowrap">${r.date}</td><td><strong>${r.name||'—'}</strong></td><td style="direction:ltr;text-align:left;font-size:12px">${r.phone||'—'}</td><td>${r.building||'—'}</td><td style="font-size:12px;max-width:240px">${r.message}</td><td>${r.status}</td></tr>`).join('');
+      tbody.innerHTML=rows.map(r=>`<tr><td style="font-size:12px;white-space:nowrap">${escHtml(r.date)}</td><td><strong>${escHtml(r.name)||'—'}</strong></td><td style="direction:ltr;text-align:left;font-size:12px">${escHtml(r.phone)||'—'}</td><td>${escHtml(r.building)||'—'}</td><td style="font-size:12px;max-width:240px">${escHtml(r.message)}</td><td>${escHtml(r.status)}</td></tr>`).join('');
     })
     .withFailureHandler(e=>toast('خطأ: '+e.message,'err'))
     .getMessageLog();
@@ -1319,9 +1339,9 @@ function loadAlerts() {
   const days = parseInt(document.getElementById('alertsRange').value) || 14;
   document.getElementById('alertsList').innerHTML = '<div style="text-align:center;padding:30px;color:#718096">جارٍ التحميل...</div>';
   google.script.run
-    .withSuccessHandler(renderAlerts)
+    .withSuccessHandler(freshGuard_(renderAlerts))
     .withFailureHandler(e => {
-      document.getElementById('alertsList').innerHTML = `<div style="text-align:center;padding:20px;color:var(--red)">خطأ: ${e.message}</div>`;
+      document.getElementById('alertsList').innerHTML = `<div style="text-align:center;padding:20px;color:var(--red)">خطأ: ${escHtml(e.message)}</div>`;
     })
     .getUpcomingDueDates(days);
 }
@@ -1364,9 +1384,9 @@ function renderAlerts(data) {
                       `${d.daysUntil} يوم`;
       return `<tr>
         <td>${badge}</td>
-        <td><strong>${d.tenant}</strong></td>
-        <td>${d.building}</td><td>${d.unit}</td>
-        <td><span style="font-size:12px;color:#718096">${d.schedule||'—'}</span></td>
+        <td><strong>${escHtml(d.tenant)}</strong></td>
+        <td>${escHtml(d.building)}</td><td>${escHtml(d.unit)}</td>
+        <td><span style="font-size:12px;color:#718096">${escHtml(d.schedule)||'—'}</span></td>
         <td style="font-size:13px;font-weight:500">${d.dueDate}</td>
         <td style="color:${color};font-weight:600">${daysLbl}</td>
         <td>${nf(d.rent)} ر.س</td>
@@ -1445,7 +1465,7 @@ function sendCustomSms() {
 // ── Finance Section ─────────────────────────
 function loadFinance() {
   google.script.run
-    .withSuccessHandler(renderFinance)
+    .withSuccessHandler(freshGuard_(renderFinance))
     .withFailureHandler(e => toast('خطأ: '+e.message, 'err'))
     .getFinancialStats();
 }
@@ -1516,15 +1536,15 @@ function renderFinance(data) {
   if (agingBody) {
     const aging = data.aging || [];
     agingBody.innerHTML = aging.length ? aging.map(b => `<tr>
-      <td><strong>${b.label}</strong></td><td>${b.count}</td><td>${nf(b.amount)} ر.س</td>
-      <td style="font-size:11px;color:#718096">${(b.items||[]).slice(0,3).map(i=>`${i.tenant} (${i.age} يوم)`).join('، ') || '—'}</td>
+      <td><strong>${escHtml(b.label)}</strong></td><td>${b.count}</td><td>${nf(b.amount)} ر.س</td>
+      <td style="font-size:11px;color:#718096">${(b.items||[]).slice(0,3).map(i=>`${escHtml(i.tenant)} (${i.age} يوم)`).join('، ') || '—'}</td>
     </tr>`).join('') : '<tr><td colspan="4" style="text-align:center;color:#718096">لا توجد متأخرات مصنفة</td></tr>';
   }
 
   document.getElementById('fin-bldg-body').innerHTML = data.byBuilding.map(b => {
     const color = b.collectRate >= 80 ? 'var(--green)' : b.collectRate >= 50 ? 'var(--amber)' : 'var(--red)';
     return `<tr>
-      <td><strong>${b.name}</strong></td>
+      <td><strong>${escHtml(b.name)}</strong></td>
       <td style="text-align:center">${b.contracts}</td>
       <td>${nf(b.rent)}</td>
       <td style="color:var(--green)">${nf(b.paid)}</td>
@@ -1552,7 +1572,7 @@ function renderFinance(data) {
         const tRent = _rentByTenant[t.name] || 0;
         return `<tr>
           <td style="text-align:center">${medal}</td>
-          <td><strong>${t.name}</strong></td>
+          <td><strong>${escHtml(t.name)}</strong></td>
           <td style="text-align:center">${t.contractsCount || '—'}</td>
           <td>${tRent > 0 ? nf(tRent) + ' ر.س' : '—'}</td>
           <td style="color:var(--green);font-weight:500">${nf(t.totalPaid)} ر.س</td>
@@ -1563,7 +1583,7 @@ function renderFinance(data) {
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i+1);
       return `<tr>
         <td style="text-align:center">${medal}</td>
-        <td><strong>${t.name}</strong></td>
+        <td><strong>${escHtml(t.name)}</strong></td>
         <td style="text-align:center">${t.contracts}</td>
         <td>${nf(t.rent)} ر.س</td>
         <td style="color:var(--green);font-weight:500">${nf(t.paid)} ر.س</td>
@@ -1802,7 +1822,7 @@ let _allUsers = [];
 
 function loadUsers() {
   google.script.run
-    .withSuccessHandler(d => { _allUsers = d || []; renderUsers(); })
+    .withSuccessHandler(freshGuard_(function(d){ _allUsers = d || []; renderUsers(); }))
     .withFailureHandler(e => toast('خطأ: ' + e.message, 'err'))
     .getUsers();
 }
@@ -1820,12 +1840,12 @@ function renderUsers() {
     viewer: '<span class="badge b-gray">مشاهد</span>'
   };
   body.innerHTML = _allUsers.map(u => `<tr>
-    <td><strong>${u.username}</strong></td>
-    <td>${u.name || '—'}</td>
-    <td>${roleLabels[u.role] || u.role}</td>
-    <td style="font-size:12px">${u.email || '—'}</td>
+    <td><strong>${escHtml(u.username)}</strong></td>
+    <td>${escHtml(u.name) || '—'}</td>
+    <td>${roleLabels[u.role] || escHtml(u.role)}</td>
+    <td style="font-size:12px">${escHtml(u.email) || '—'}</td>
     <td>${u.active ? '<span class="badge b-green">نشط</span>' : '<span class="badge b-gray">معطّل</span>'}</td>
-    <td style="font-size:11px;color:#718096">${u.lastLogin || '—'}</td>
+    <td style="font-size:11px;color:#718096">${escHtml(u.lastLogin) || '—'}</td>
     <td><div style="display:flex;gap:4px">
       <button class="btn btn-sm btn-primary" onclick="openUserModal('edit',${u.row})">تعديل</button>
       ${u.username !== 'admin' ? `<button class="btn btn-sm btn-danger" onclick="confirmDeleteUser(${u.row},'${esc(u.username)}')">حذف</button>` : ''}
@@ -1917,7 +1937,7 @@ function confirmDeleteUser(rowNum, username) {
 function loadActivity() {
   document.getElementById('activityBody').innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:#718096">جارٍ التحميل...</td></tr>';
   google.script.run
-    .withSuccessHandler(renderActivity)
+    .withSuccessHandler(freshGuard_(renderActivity))
     .withFailureHandler(e => toast('خطأ: ' + e.message, 'err'))
     .getActivityLog(200);
 }
@@ -1951,11 +1971,11 @@ function filterActivity() {
     'دفعة': 'var(--green)', 'رسالة': 'var(--amber)', 'نسخ احتياطي': 'var(--blue)'
   };
   body.innerHTML = filtered.map(a => '<tr>' +
-    '<td style="font-size:11px;color:#718096;white-space:nowrap">' + a.time + '</td>' +
-    '<td><strong>' + a.username + '</strong></td>' +
-    '<td><span style="color:' + (actionColors[a.action]||'#718096') + ';font-weight:500">' + a.action + '</span></td>' +
-    '<td style="font-size:12px">' + a.entity + '</td>' +
-    '<td style="font-size:12px">' + a.details + '</td>' +
+    '<td style="font-size:11px;color:#718096;white-space:nowrap">' + escHtml(a.time) + '</td>' +
+    '<td><strong>' + escHtml(a.username) + '</strong></td>' +
+    '<td><span style="color:' + (actionColors[a.action]||'#718096') + ';font-weight:500">' + escHtml(a.action) + '</span></td>' +
+    '<td style="font-size:12px">' + escHtml(a.entity) + '</td>' +
+    '<td style="font-size:12px">' + escHtml(a.details) + '</td>' +
     '</tr>').join('');
 }
 
@@ -2019,16 +2039,21 @@ function toggleAutoBackup() {
   const handler = r => {
     btn.disabled = false;
     if (r.error) {
-      document.getElementById('bkResult').innerHTML = '<div class="result err">' + r.error + '</div>';
+      document.getElementById('bkResult').innerHTML = '<div class="result err">' + escHtml(r.error) + '</div>';
     } else {
-      document.getElementById('bkResult').innerHTML = '<div class="result">✅ ' + r.message + '</div>';
+      document.getElementById('bkResult').innerHTML = '<div class="result">✅ ' + escHtml(r.message) + '</div>';
       loadBackup();
     }
   };
+  // معالج فشل: يُعيد تفعيل الزر حتى لا يبقى معطّلاً للأبد عند انقطاع الاتصال
+  const failHandler = e => {
+    btn.disabled = false;
+    document.getElementById('bkResult').innerHTML = '<div class="result err">خطأ: ' + escHtml(e.message) + '</div>';
+  };
   if (isOn) {
-    google.script.run.withSuccessHandler(handler).disableDailyBackup();
+    google.script.run.withSuccessHandler(handler).withFailureHandler(failHandler).disableDailyBackup();
   } else {
-    google.script.run.withSuccessHandler(handler).setupDailyBackup();
+    google.script.run.withSuccessHandler(handler).withFailureHandler(failHandler).setupDailyBackup();
   }
 }
 
@@ -2140,7 +2165,7 @@ function loadMaintenance() {
   const tbody = document.getElementById('maintenanceBody');
   if (tbody) tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:20px;color:#718096">جارٍ التحميل...</td></tr>';
   google.script.run
-    .withSuccessHandler(renderMaintenance)
+    .withSuccessHandler(freshGuard_(function(d){ renderMaintenance(d && d.error ? [] : d); if (d && d.error) toast('خطأ الصيانة: ' + d.error, 'err'); }))
     .withFailureHandler(e => toast('خطأ تحميل الصيانة: ' + e.message, 'err'))
     .getMaintenanceList();
 }
@@ -2180,16 +2205,16 @@ function _applyMaintenanceFilters() {
   const statusCls = { 'جديد':'b-blue', 'قيد التنفيذ':'b-amber', 'مكتمل':'b-green', 'ملغي':'b-gray' };
 
   tbody.innerHTML = filtered.map(r => `<tr>
-    <td style="font-size:11px;color:#718096;white-space:nowrap">${r.date || '—'}</td>
-    <td>${r.building || '—'}</td>
-    <td style="text-align:center">${r.unit || '—'}</td>
-    <td style="font-size:12px">${r.tenant || '—'}</td>
-    <td><span class="badge b-navy" style="font-size:11px">${r.category || '—'}</span></td>
-    <td><span class="badge ${priCls[r.priority] || 'b-gray'}" style="font-size:11px">${r.priority || '—'}</span></td>
+    <td style="font-size:11px;color:#718096;white-space:nowrap">${escHtml(r.date) || '—'}</td>
+    <td>${escHtml(r.building) || '—'}</td>
+    <td style="text-align:center">${escHtml(r.unit) || '—'}</td>
+    <td style="font-size:12px">${escHtml(r.tenant) || '—'}</td>
+    <td><span class="badge b-navy" style="font-size:11px">${escHtml(r.category) || '—'}</span></td>
+    <td><span class="badge ${priCls[r.priority] || 'b-gray'}" style="font-size:11px">${escHtml(r.priority) || '—'}</span></td>
     <td style="font-size:12px;max-width:200px;word-break:break-word">${escHtml(r.description || '—')}</td>
-    <td style="font-size:12px">${r.contractor || '—'}</td>
+    <td style="font-size:12px">${escHtml(r.contractor) || '—'}</td>
     <td style="font-size:12px">${r.actualCost ? nf(r.actualCost) + ' ر.س' : '—'}</td>
-    <td><span class="badge ${statusCls[r.status] || 'b-gray'}">${r.status || '—'}</span></td>
+    <td><span class="badge ${statusCls[r.status] || 'b-gray'}">${escHtml(r.status) || '—'}</span></td>
     <td><div style="display:flex;gap:4px">
       ${hasPerm('maintenance.edit')   ? `<button class="btn btn-sm btn-primary" onclick="openMaintenanceModal('edit',${r.row})">تعديل</button>` : ''}
       ${hasPerm('maintenance.delete') ? `<button class="btn btn-sm btn-danger"  onclick="confirmDeleteMaintenance(${r.row})">حذف</button>` : ''}
