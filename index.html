@@ -262,7 +262,7 @@
         <div class="card-title" style="font-size:13px;margin-bottom:8px">📱 رسالة لمستأجر واحد</div>
         <div class="form-group"><input class="form-control" id="singlePhone" placeholder="05xxxxxxxx"></div>
         <div class="form-group"><textarea class="form-control" id="singleMsg" style="min-height:55px" placeholder="نص الرسالة..."></textarea></div>
-        <button data-perm="sms.send" class="btn btn-primary" onclick="sendSingle()">إرسال</button>
+        <button data-perm="sms.send" id="singleSendBtn" class="btn btn-primary" onclick="sendSingle()">إرسال</button>
         <div id="singleResult"></div>
       </div>
     </div>
@@ -682,7 +682,7 @@
     </div>
     <div class="modal-footer">
       <button class="btn" onclick="closeModal('paymentModal')">إلغاء</button>
-      <button class="btn btn-success" onclick="savePayment()">تسجيل</button>
+      <button class="btn btn-success" id="paySaveBtn" onclick="savePayment()">تسجيل</button>
     </div>
   </div>
 </div>
