@@ -2478,30 +2478,27 @@ function _onEjarFileSelected_(input) {
   reader.readAsArrayBuffer(file);
 }
 
-// تجميع عناصر الصفحة في أسطر حسب الموضع الرأسي (Y)
+// تجميع عناصر الصفحة في أسطر حسب الموضع الرأسي مع ترتيب أفقي صحيح (يسار←يمين)
 function _ejarPageToLines_(page) {
   return page.getTextContent().then(function(tc) {
     var bands = {};
     tc.items.forEach(function(item) {
       if (!item.str || !item.str.trim()) return;
-      var band = Math.round(item.transform[5] / 4); // تجميع كل 4px في نفس السطر
+      // 8px band: يجمع عناصر نفس السطر البصري في جداول PDF الثنائية اللغة
+      var band = Math.round(item.transform[5] / 8);
       if (!bands[band]) bands[band] = [];
-      bands[band].push(item.str);
+      bands[band].push({ str: item.str.trim(), x: item.transform[4] });
     });
-    // ترتيب من الأعلى إلى الأسفل (Y أكبر = أعلى في PDF)
     return Object.keys(bands)
       .sort(function(a, b) { return Number(b) - Number(a); })
-      .map(function(b) { return bands[b].join(' '); });
+      .map(function(b) {
+        // ترتيب من اليسار لليمين داخل كل سطر لضمان صحة تسلسل التسمية والقيمة
+        return bands[b]
+          .sort(function(a, b) { return a.x - b.x; })
+          .map(function(i) { return i.str; })
+          .join(' ');
+      });
   });
-}
-
-// البحث في كلا الاتجاهين داخل السطر (قبل الكلمة المرساة أو بعدها)
-function _findInLine_(line, anchor, capturePattern) {
-  var a = anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  var rBefore = new RegExp('(' + capturePattern + ')\\s+' + a);
-  var rAfter  = new RegExp(a + '\\s+(' + capturePattern + ')');
-  var m = line.match(rBefore) || line.match(rAfter);
-  return m ? m[1].trim() : '';
 }
 
 function _parseEjarLines_(lines) {
@@ -2509,99 +2506,116 @@ function _parseEjarLines_(lines) {
       rent = '', schedule = '', unit = '', ejarNo = '',
       tenantName = '', contractType = 'سكني', address = '';
 
-  // تتبع ما إذا كنا في قسم المستأجر (4) أم لا
-  var inTenantSection = false;
+  // نص كامل للبحث السياقي (أفضل من المسح السطري لـ PDF ثنائي اللغة)
+  var fullText = '\n' + lines.join('\n') + '\n';
 
-  lines.forEach(function(line) {
+  function fromFull(re) {
+    var m = fullText.match(re);
+    return m ? m[1].trim() : '';
+  }
+
+  // ── رقم الوحدة ──
+  // في جداول إيجار: القيمة قد تسبق أو تتبع التسمية حسب ترتيب الأعمدة
+  unit = fromFull(/(?:رقم\s*الوحدة|Unit\s*No\.?|No\.?\s*Unit)\s*[:\s]\s*([A-Za-z0-9]+)/i)
+      || fromFull(/([A-Za-z0-9]+)\s+(?:رقم\s*الوحدة)/i);
+
+  // ── رقم عقد إيجار ──
+  ejarNo = fromFull(/(?:رقم\s*العقد(?:\s*الإلكتروني)?|Contract\s*No\.?|No\.?\s*Contract)\s*[:\s]*(\d{8,})/i)
+        || fromFull(/\b(\d{11})\b/);
+
+  // ── قيمة الإيجار السنوية ──
+  var rentRaw = fromFull(/(?:قيمة\s*الإيجار(?:\s*السنوي(?:ة)?)?|Annual\s*Rent|Rent\s*Annual)\s*[:\s]*([\d,]+(?:\.\d+)?)/i);
+  if (rentRaw) rent = rentRaw.replace(/,/g, '').replace(/\.0+$/, '');
+
+  // ── دورية السداد ──
+  var schedM = fullText.match(/(?:دورية\s*السداد|Payment\s*Cycle|Cycle\s*Payment|Rent\s*Payment)\s*[:\s]*([^\n\r:،,]{2,30})/i);
+  if (schedM) {
+    var raw = schedM[1];
+    if (/ربع/.test(raw)) schedule = '3 أشهر';
+    else if (/نصف/.test(raw)) schedule = '6 أشهر';
+    else if (/سنو/.test(raw)) schedule = 'سنوي';
+    else if (/شهر/.test(raw)) schedule = 'شهري';
+  }
+
+  // ── تاريخ البداية ──
+  startDate = fromFull(/(?:تاريخ\s*(?:بداية|بدء)(?:\s*(?:الإيجار|العقد))?|Date\s*Start|Start\s*(?:Tenancy|Date)|Tenancy\s*Start)\s*[:\s]*(\d{4}-\d{2}-\d{2})/i);
+  if (!startDate) {
+    var allDates = fullText.match(/\b(\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01]))\b/g);
+    if (allDates && allDates.length) startDate = allDates[0];
+  }
+
+  // ── تاريخ النهاية ──
+  endDate = fromFull(/(?:تاريخ\s*(?:نهاية|انتهاء)(?:\s*(?:الإيجار|العقد))?|Date\s*End|End\s*(?:Tenancy|Date)|Tenancy\s*End)\s*[:\s]*(\d{4}-\d{2}-\d{2})/i);
+  if (!endDate) {
+    var allDates2 = fullText.match(/\b\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])\b/g);
+    if (allDates2 && allDates2.length > 1) endDate = allDates2[allDates2.length - 1];
+  }
+
+  // ── نوع الاستخدام ──
+  if (/تجاري/.test(fullText)) contractType = 'تجاري';
+
+  // ── العنوان الوطني ──
+  address = fromFull(/(?:العنوان\s*الوطني|National\s*Address)\s*[:\s]*([^\n\r:]{5,80})/i);
+
+  // ── الحقول المعتمدة على قسم المستأجر: مسح سطري مع النظر للسطر التالي ──
+  var inTenantSection = false;
+  lines.forEach(function(line, idx) {
     var l = line.trim();
     if (!l) return;
 
-    // كشف حدود قسم المستأجر
-    if (/Data\s+Tenant|4\s+بيانات\s+المستأجر/i.test(l)) { inTenantSection = true; return; }
-    if (/Data\s+Representative\s+Tenant|5\s+بيانات/i.test(l)) { inTenantSection = false; }
-
-    // ── تواريخ العقد ──
-    if (!startDate && /Date\s*Start|Start\s*Tenancy/i.test(l)) {
-      var d = l.match(/(\d{4}-\d{2}-\d{2})/);
-      if (d) startDate = d[1];
+    if (/(?:بيانات\s*المستأجر|Tenant\s*(?:Data|Information|Details))/i.test(l)) {
+      inTenantSection = true; return;
     }
-    if (!endDate && /Date\s*End|End\s*Tenancy/i.test(l)) {
-      var d = l.match(/(\d{4}-\d{2}-\d{2})/);
-      if (d) endDate = d[1];
+    if (/(?:بيانات\s*(?:ممثل|مفوض|المالك|المؤجر)|Representative|Landlord|Lessor|Owner)/i.test(l)) {
+      inTenantSection = false;
     }
 
-    // ── رقم الهوية (فقط في قسم المستأجر) ──
-    if (!idNo && inTenantSection && /No\.?\s*ID|ID\s*No\.?/i.test(l)) {
-      var id = l.match(/\b(\d{10})\b/);
+    var lNext = (lines[idx + 1] || '').trim();
+    var combined = l + ' ' + lNext;
+
+    // رقم الهوية / الإقامة (بحث في السطر الحالي والتالي معاً)
+    if (!idNo && /(?:رقم\s*(?:الهوية|الإقامة|الوثيقة)|(?:ID|Identity|Iqama)\s*No\.?)/i.test(l)) {
+      var id = combined.match(/\b(\d{10})\b/);
       if (id) idNo = id[1];
     }
 
-    // ── رقم الجوال (فقط في قسم المستأجر) ──
-    if (!phone && inTenantSection && /No\.?\s*Mobile|Mobile\s*No\.?/i.test(l)) {
-      var ph = l.match(/(\+?966\d{9})/);
+    // رقم الجوال
+    if (!phone && /(?:رقم\s*(?:الجوال|الهاتف|الاتصال)|(?:Mobile|Phone|Tel)\s*No\.?)/i.test(l)) {
+      var ph = combined.match(/(\+?9665\d{8}|\+?966\d{9}|05\d{8})/);
       if (ph) {
-        var digits = ph[1].replace(/^\+?966/, '');
-        if (digits.length === 9) phone = '0' + digits;
+        var digs = ph[1].replace(/^\+?966/, '');
+        phone = digs.length === 9 ? '0' + digs : ph[1];
       }
     }
 
-    // ── اسم المستأجر (في قسم المستأجر، السطر الذي يحتوي Name) ──
-    if (!tenantName && inTenantSection && /\bName\b/i.test(l)) {
-      // استخرج النص العربي (يبدأ بحرف عربي، أطول من 3 أحرف)
-      var nm = l.match(/([؀-ۿ][^ -\n]{3,60})/);
+    // اسم المستأجر (فقط في قسم المستأجر)
+    if (!tenantName && inTenantSection && /(?:الاسم(?:\s*الكامل)?|Full\s*Name|Tenant\s*Name)\b/i.test(l)) {
+      var nm = l.match(/([؀-ۿ][؀-ۿ ]{5,60})/) || lNext.match(/^([؀-ۿ][؀-ۿ ]{5,60})$/);
       if (nm) {
         tenantName = nm[1].trim()
-          .replace(/\s+(Nationality|Type|ID|رقم|الجنسية|نوع)[\s\S]*$/, '')
-          .replace(/^(الاسم|:|\s)+/, '')
+          .replace(/\s+(?:الجنسية|رقم|نوع|النوع|Nationality|Type|ID|Mobile|Phone).*$/, '')
           .trim();
       }
     }
-
-    // ── قيمة الإيجار ──
-    if (!rent && /Rent\s*Annual|Annual\s*Rent/i.test(l)) {
-      var r = l.match(/([\d,]+(?:\.\d+)?)/);
-      if (r) rent = r[1].replace(/,/g, '').replace(/\.00$/, '');
-    }
-
-    // ── دورية السداد ──
-    if (!schedule && /cycle\s*payment|payment\s*cycle|payment\s*Rent/i.test(l)) {
-      var sc = l.match(/(شهري|ربع\s*سنوي|نصف\s*سنوي|سنوي|مرن)/);
-      if (sc) {
-        var raw = sc[1];
-        schedule = raw.indexOf('ربع') >= 0 ? '3 أشهر'
-                 : raw.indexOf('نصف') >= 0 ? '6 أشهر'
-                 : (raw === 'سنوي' ? 'سنوي' : raw === 'شهري' ? 'شهري' : '');
-      }
-    }
-
-    // ── رقم الوحدة ──
-    if (!unit && /No\.?\s*Unit\b|Unit\s*No\.?/i.test(l)) {
-      var u = _findInLine_(l, 'No', '[A-Za-z0-9\\u0660-\\u0669]+') ||
-              l.match(/(?:No\.?\s*Unit|Unit\s*No\.?)\s*:?\s*(\S+)/i)?.[1] || '';
-      // تحقق أن القيمة ليست "Unit" نفسها
-      if (u && !/^unit$/i.test(u)) unit = u;
-    }
-
-    // ── رقم عقد إيجار ──
-    if (!ejarNo && /No\.?\s*Contract|Contract\s*No\.?/i.test(l)) {
-      var nums = l.match(/(\d{8,})/g);
-      if (nums) ejarNo = nums[nums.length - 1]; // الرقم الأطول عادةً هو رقم العقد
-    }
-
-    // ── نوع الاستخدام (سكني/تجاري) ──
-    if (/Property\s*Usage|Property\s*Type/i.test(l)) {
-      if (l.indexOf('تجاري') >= 0) contractType = 'تجاري';
-    }
-
-    // ── العنوان لعرضه كمرجع ──
-    if (!address && /National\s+Address/i.test(l)) {
-      var ar = l.match(/([؀-ۿ0-9,\s]{5,80})/);
-      if (ar) address = ar[1].trim();
-    }
   });
 
-  return { tenantName, idNo, phone, startDate, endDate,
-           rent, schedule, unit, contractType, ejarNo, address };
+  // fallback: رقم الهوية من النص الكامل
+  if (!idNo)
+    idNo = fromFull(/(?:رقم\s*(?:الهوية|الإقامة)|ID\s*No\.?)\s*[:\s]*(\d{10})/i);
+
+  // fallback: رقم الجوال من النص الكامل
+  if (!phone) {
+    var ph2 = fromFull(/(?:رقم\s*(?:الجوال|الهاتف)|Mobile\s*No\.?)\s*[:\s]*(\+?9665\d{8}|\+?966\d{9}|05\d{8})/i);
+    if (ph2) {
+      var d2 = ph2.replace(/^\+?966/, '');
+      phone = d2.length === 9 ? '0' + d2 : ph2;
+    }
+  }
+
+  return { tenantName: tenantName, idNo: idNo, phone: phone,
+           startDate: startDate, endDate: endDate, rent: rent,
+           schedule: schedule, unit: unit, contractType: contractType,
+           ejarNo: ejarNo, address: address };
 }
 
 // فحص تعارضات في العقود الحالية
