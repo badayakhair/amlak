@@ -2416,3 +2416,254 @@ function confirmDeleteMaintenance(row) {
   };
 
 })();
+
+// ═══════════════════════════════════════════════
+// استيراد عقد إيجار من PDF (Ejar Import)
+// ═══════════════════════════════════════════════
+
+var _ejarExtracted = null; // بيانات آخر PDF استُخرجت
+
+function importEjarPdf() {
+  if (!hasPerm('contracts.add')) { toast('ليس لديك صلاحية إضافة عقود', 'err'); return; }
+  _loadPdfJs_(function() {
+    var inp = document.getElementById('ejarPdfFile');
+    if (inp) inp.click();
+  });
+}
+
+function _loadPdfJs_(cb) {
+  if (window.pdfjsLib) { cb(); return; }
+  var s = document.createElement('script');
+  s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+  s.onload = function() {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    cb();
+  };
+  s.onerror = function() { toast('تعذر تحميل مكتبة قراءة PDF — تحقق من الاتصال', 'err'); };
+  document.head.appendChild(s);
+}
+
+function _onEjarFileSelected_(input) {
+  var file = input.files && input.files[0];
+  input.value = '';
+  if (!file) return;
+  if (file.type && file.type !== 'application/pdf') { toast('الملف ليس PDF', 'err'); return; }
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    _loadPdfJs_(function() {
+      var task = pdfjsLib.getDocument({ data: new Uint8Array(e.target.result) });
+      task.promise.then(function(pdf) {
+        var pages = [];
+        var total = pdf.numPages;
+        for (var i = 1; i <= Math.min(total, 4); i++) {
+          pages.push(pdf.getPage(i).then(function(pg) {
+            return pg.getTextContent().then(function(tc) {
+              return tc.items.map(function(it) { return it.str; }).join(' ');
+            });
+          }));
+        }
+        Promise.all(pages).then(function(texts) {
+          var fullText = texts.join('\n');
+          var data = _parseEjarText_(fullText);
+          if (!data.tenantName && !data.startDate && !data.rent) {
+            toast('لم يتم التعرف على بيانات إيجار — تأكد أن الملف عقد إيجار رسمي', 'err');
+            return;
+          }
+          _ejarExtracted = data;
+          _showEjarPreview_(data);
+        }).catch(function() { toast('خطأ في قراءة صفحات PDF', 'err'); });
+      }).catch(function() { toast('تعذر فتح الملف — تأكد أنه PDF صحيح وغير محمي بكلمة مرور', 'err'); });
+    });
+  };
+  reader.onerror = function() { toast('خطأ في قراءة الملف', 'err'); };
+  reader.readAsArrayBuffer(file);
+}
+
+function _parseEjarText_(t) {
+  // دالة مساعدة: أول مطابقة من مجموعة regex
+  function m(patterns, group) {
+    group = group || 1;
+    for (var i = 0; i < patterns.length; i++) {
+      var res = t.match(patterns[i]);
+      if (res && res[group]) return res[group].trim();
+    }
+    return '';
+  }
+
+  // استخراج قسم المستأجر بين علامتَي "Data Tenant" و "Data Representative Tenant"
+  var tenantBlock = '';
+  var tb = t.match(/Data Tenant([\s\S]*?)(?:Data Representative Tenant|5\s+بيانات)/);
+  if (tb) tenantBlock = tb[1];
+
+  // الاسم: نصٌّ عربي بعد "الاسم:" وقبل "Name"
+  var tenantName = m(
+    [/Data Tenant[\s\S]*?الاسم[:\s]+(.+?)\s+Name/,
+     new RegExp('الاسم[:\\s]+([\\u0600-\\u06FF\\s]{5,50}?)\\s+Name')]
+  );
+
+  // رقم الهوية: 10 أرقام قبل ".No ID"
+  var idNo = m([/(\d{10})\s+\.No ID/], 1) ||
+             (tenantBlock && (tenantBlock.match(/(\d{10})\s+\.No ID/) || [])[1]) || '';
+
+  // الجوال: رقم يبدأ بـ +966 قبل ".No Mobile" في قسم المستأجر
+  var phoneRaw = m([/(\+?966\d{9})\s+\.No Mobile[\s\S]{0,300}Data Representative Tenant/,
+                    /(\+?966\d{9})\s+\.No Mobile/]);
+  // تحويل +966XXXXXXXXX → 05XXXXXXXXX
+  var phone = '';
+  if (phoneRaw) {
+    var digits = phoneRaw.replace(/^\+?966/, '');
+    if (digits.length === 9) phone = '0' + digits;
+  }
+
+  // تواريخ بداية ونهاية الإيجار (YYYY-MM-DD قبل التسمية الإنجليزية)
+  var startDate = m([/(\d{4}-\d{2}-\d{2})\s+Date Start/]);
+  var endDate   = m([/(\d{4}-\d{2}-\d{2})\s+Date End/]);
+
+  // قيمة الإيجار السنوية
+  var rent = m([/([\d,]+\.?\d*)\s+Rent Annual/,
+                /Annual Rent[\s\S]{0,20}?([\d,]+\.?\d*)/])
+               .replace(/,/g, '').replace(/\.00$/, '');
+
+  // دورية السداد العربية قبل "cycle payment Rent"
+  var scheduleAr = m([/(\S+)\s+cycle payment Rent/]);
+  var scheduleMap = { 'شهري': 'شهري', 'سنوي': 'سنوي' };
+  var schedule = '';
+  if (scheduleAr) {
+    if (scheduleMap[scheduleAr]) {
+      schedule = scheduleMap[scheduleAr];
+    } else if (scheduleAr.indexOf('ربع') >= 0) {
+      schedule = '3 أشهر';
+    } else if (scheduleAr.indexOf('نصف') >= 0) {
+      schedule = '6 أشهر';
+    }
+  }
+
+  // رقم الوحدة قبل ".No Unit"
+  var unit = m([/(\S+)\s+\.No Unit/]);
+
+  // نوع العقد: جديد أم مجدد
+  var contractTypeAr = m([/(\S+)\s+Type Contract/]);
+
+  // نوع الاستخدام للتحديد تلقائياً: سكني أم تجاري
+  var usage = m([/Property Usage[\s\S]{0,10}?(\S[\s\S]{0,20}?)\s+Property Type/,
+                 /(\S+\s*[-–]\s*\S+)\s+الغرض/]);
+  var contractType = (usage.indexOf('تجاري') >= 0) ? 'تجاري' : 'سكني';
+
+  // رقم عقد إيجار (للملاحظات)
+  var ejarNo = m([/(\d{8,})\s+\/\s+\d+\s+\.No Contract/,
+                  /\d+\s+\/\s+(\d{8,})\s+\.No Contract/,
+                  /(\d{8,})\s+\.No Contract/]);
+
+  // العنوان لعرضه كمرجع عند اختيار المبنى
+  var address = m([/National Address[\s\S]{0,5}?([؀-ۿ,\d\s]{5,80})Address National/,
+                   /العنوان\s+الوطني[:\s]+([^\n]{5,80})/]);
+
+  return {
+    tenantName: tenantName,
+    idNo:       idNo,
+    phone:      phone,
+    startDate:  startDate,
+    endDate:    endDate,
+    rent:       rent,
+    schedule:   schedule,
+    unit:       unit,
+    contractType: contractType,
+    contractTypeAr: contractTypeAr,
+    ejarNo:     ejarNo,
+    address:    address,
+    raw:        t.substring(0, 2000) // للتشخيص
+  };
+}
+
+function _showEjarPreview_(d) {
+  var rows = [
+    ['اسم المستأجر',  d.tenantName,  '✅'],
+    ['رقم الهوية',    d.idNo,        d.idNo       ? '✅' : '—'],
+    ['رقم الجوال',    d.phone,       d.phone      ? '✅' : '—'],
+    ['بداية العقد',   d.startDate,   d.startDate  ? '✅' : '—'],
+    ['نهاية العقد',   d.endDate,     d.endDate    ? '✅' : '—'],
+    ['قيمة الإيجار',  d.rent ? d.rent + ' ر.س' : '', d.rent ? '✅' : '—'],
+    ['دورية السداد',  d.schedule,    d.schedule   ? '✅' : '—'],
+    ['رقم الوحدة',    d.unit,        d.unit       ? '✅' : '—'],
+    ['نوع العقد',     d.contractType,'✅'],
+    ['رقم إيجار',     d.ejarNo,      d.ejarNo     ? '✅' : '—']
+  ];
+
+  var tableRows = rows.map(function(r) {
+    var val = escHtml(r[1] || '—');
+    var ok  = r[1] ? '' : 'color:#a0aec0';
+    return '<tr><td style="padding:5px 8px;color:#718096;font-size:13px">' + escHtml(r[0]) + '</td>' +
+           '<td style="padding:5px 8px;font-weight:500;font-size:13px;' + ok + '">' + val + '</td>' +
+           '<td style="padding:5px 8px;font-size:13px">' + r[2] + '</td></tr>';
+  }).join('');
+
+  var addressNote = d.address
+    ? '<div style="margin-top:10px;padding:8px 12px;background:var(--blue-l);border-radius:6px;font-size:12px;color:var(--navy)">' +
+      '📍 <strong>عنوان العقار من الملف:</strong> ' + escHtml(d.address) +
+      '<br><span style="color:#718096">اختر المبنى المطابق يدوياً من القائمة</span></div>'
+    : '';
+
+  var html =
+    '<div style="margin-bottom:10px;font-size:13px;color:#2d3748">تم استخراج البيانات التالية من الملف:</div>' +
+    '<table style="width:100%;border-collapse:collapse">' + tableRows + '</table>' +
+    addressNote +
+    '<div style="margin-top:12px;padding:8px 12px;background:#fffbeb;border-radius:6px;font-size:12px;color:#92400e">' +
+    '⚠️ راجع البيانات قبل الحفظ وتأكد من مطابقتها للملف.' +
+    '</div>';
+
+  document.getElementById('ejarPreviewBody').innerHTML = html;
+  openModal('ejarPreviewModal');
+}
+
+function applyEjarData_() {
+  var d = _ejarExtracted;
+  if (!d) return;
+
+  closeModal('ejarPreviewModal');
+
+  // افتح نموذج إضافة عقد إذا لم يكن مفتوحاً
+  var modal = document.getElementById('contractModal');
+  var isOpen = modal && modal.style.display !== 'none' && modal.classList.contains('open');
+  if (!isOpen) openContractModal('add');
+
+  // أعطِ المودال وقتاً للفتح ثم املأ الحقول
+  setTimeout(function() {
+    function setVal(id, val) {
+      var el = document.getElementById(id);
+      if (el && val) {
+        if (el.tagName === 'SELECT') {
+          for (var i = 0; i < el.options.length; i++) {
+            if (el.options[i].value === val || el.options[i].text === val) {
+              el.value = val; break;
+            }
+          }
+        } else {
+          el.value = val;
+        }
+      }
+    }
+
+    setVal('c-tenant',   d.tenantName);
+    setVal('c-idNo',     d.idNo);
+    setVal('c-phone',    d.phone);
+    setVal('c-start',    d.startDate);
+    setVal('c-end',      d.endDate);
+    setVal('c-rent',     d.rent);
+    setVal('c-schedule', d.schedule);
+    setVal('c-unit',     d.unit);
+    setVal('c-type',     d.contractType);
+
+    // أضف رقم إيجار في الملاحظات إن وُجد
+    if (d.ejarNo) {
+      var notes = document.getElementById('c-notes');
+      if (notes && !notes.value) notes.value = 'رقم عقد إيجار: ' + d.ejarNo;
+    }
+
+    // تحديث تاريخ الاستحقاق التالي
+    if (typeof updateNextDue === 'function') updateNextDue();
+
+    toast('✅ تم ملء النموذج من ملف إيجار — راجع البيانات قبل الحفظ');
+    _ejarExtracted = null;
+  }, isOpen ? 50 : 400);
+}
