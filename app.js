@@ -193,6 +193,9 @@ function hasPerm(perm) {
 // ── State
 // ── State ─────────────────────────────────────
 let S = { contracts:[], buildings:[], tenants:[], maintenanceList:[], stats:null, loaded:false, dueAlerts:[] };
+var _tabLoadedAt = {};  // طوابع زمنية لآخر تحميل كل تبويب
+var _logData = [];      // كاش سجل الرسائل
+var _financeData = null; // كاش بيانات المالية
 
 // ── Init ──────────────────────────────────────
 document.getElementById('topDate').textContent = new Date().toLocaleDateString('ar-SA',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
@@ -292,7 +295,7 @@ function silentRefresh() {
     .getAllData();
   // إذا كان قسم المالية مفتوحاً أعد تحميله لأنه يعتمد على API منفصل
   const finPage = document.getElementById('page-finance');
-  if (finPage && finPage.classList.contains('active')) loadFinance();
+  if (finPage && finPage.classList.contains('active')) { _tabLoadedAt.finance = 0; loadFinance(); }
 }
 
 function renderTopbarAlerts_(a) {
@@ -1244,7 +1247,7 @@ function sendSingle(){
   if(_sBtn){ if(_sBtn.disabled) return; _sBtn.disabled=true; _sBtn.dataset.lbl=_sBtn.textContent; _sBtn.innerHTML='<span class="spin"></span>جارٍ الإرسال...'; }
   const _sRestore=()=>{ if(_sBtn){ _sBtn.disabled=false; _sBtn.textContent=_sBtn.dataset.lbl||'إرسال'; } };
   google.script.run
-    .withSuccessHandler(r=>{_sRestore();document.getElementById('singleResult').innerHTML=`<div class="result ${r.success?'':'err'}">${r.success?'✅ أُرسلت':'❌ فشل'}</div>`;})
+    .withSuccessHandler(r=>{_sRestore();if(r.success)_tabLoadedAt.log=0;document.getElementById('singleResult').innerHTML=`<div class="result ${r.success?'':'err'}">${r.success?'✅ أُرسلت':'❌ فشل'}</div>`;})
     .withFailureHandler(e=>{_sRestore();toast('خطأ: '+e.message,'err');}).sendSingleSms(p,m);
 }
 
@@ -1270,13 +1273,15 @@ function askAI(q){
 }
 
 // ── Log ───────────────────────────────────────
+function _renderLog_(rows) {
+  const tbody = document.getElementById('logBody');
+  if (!rows.length) { tbody.innerHTML='<tr><td colspan="6" style="text-align:center;padding:20px;color:#718096">لا توجد رسائل</td></tr>'; return; }
+  tbody.innerHTML = rows.map(r=>`<tr><td style="font-size:12px;white-space:nowrap">${escHtml(r.date)}</td><td><strong>${escHtml(r.name)||'—'}</strong></td><td style="direction:ltr;text-align:left;font-size:12px">${escHtml(r.phone)||'—'}</td><td>${escHtml(r.building)||'—'}</td><td style="font-size:12px;max-width:240px">${escHtml(r.message)}</td><td>${escHtml(r.status)}</td></tr>`).join('');
+}
 function loadLog(){
+  if (_logData.length && _tabLoadedAt.log && Date.now() - _tabLoadedAt.log < 90000) { _renderLog_(_logData); return; }
   google.script.run
-    .withSuccessHandler(rows=>{
-      const tbody=document.getElementById('logBody');
-      if(!rows.length){tbody.innerHTML='<tr><td colspan="6" style="text-align:center;padding:20px;color:#718096">لا توجد رسائل</td></tr>';return;}
-      tbody.innerHTML=rows.map(r=>`<tr><td style="font-size:12px;white-space:nowrap">${escHtml(r.date)}</td><td><strong>${escHtml(r.name)||'—'}</strong></td><td style="direction:ltr;text-align:left;font-size:12px">${escHtml(r.phone)||'—'}</td><td>${escHtml(r.building)||'—'}</td><td style="font-size:12px;max-width:240px">${escHtml(r.message)}</td><td>${escHtml(r.status)}</td></tr>`).join('');
-    })
+    .withSuccessHandler(rows=>{ _logData = rows || []; _tabLoadedAt.log = Date.now(); _renderLog_(_logData); })
     .withFailureHandler(e=>toast('خطأ: '+e.message,'err'))
     .getMessageLog();
 }
@@ -1464,8 +1469,9 @@ function sendCustomSms() {
 
 // ── Finance Section ─────────────────────────
 function loadFinance() {
+  if (_financeData && _tabLoadedAt.finance && Date.now() - _tabLoadedAt.finance < 45000) { renderFinance(_financeData); return; }
   google.script.run
-    .withSuccessHandler(freshGuard_(renderFinance))
+    .withSuccessHandler(freshGuard_(function(d){ _financeData = d; _tabLoadedAt.finance = Date.now(); renderFinance(d); }))
     .withFailureHandler(e => toast('خطأ: '+e.message, 'err'))
     .getFinancialStats();
 }
@@ -1821,8 +1827,9 @@ function changePassword() {
 let _allUsers = [];
 
 function loadUsers() {
+  if (_allUsers.length && _tabLoadedAt.users && Date.now() - _tabLoadedAt.users < 120000) { renderUsers(); return; }
   google.script.run
-    .withSuccessHandler(freshGuard_(function(d){ _allUsers = d || []; renderUsers(); }))
+    .withSuccessHandler(freshGuard_(function(d){ _allUsers = d || []; _tabLoadedAt.users = Date.now(); renderUsers(); }))
     .withFailureHandler(e => toast('خطأ: ' + e.message, 'err'))
     .getUsers();
 }
@@ -1911,7 +1918,7 @@ function saveUser() {
     out.innerHTML = '<div class="result">✅ ' + (r && r.message || 'تم الحفظ') + '</div>';
     // إذا عدّل المستخدم حسابه هو، أعد تحميل الجلسة لتطبيق الصلاحيات الجديدة فوراً
     const isSelfEdit = row > 0 && _currentUser && _currentUser.username === data.username;
-    setTimeout(() => { closeModal('userModal'); isSelfEdit ? checkSession() : loadUsers(); }, 1200);
+    setTimeout(() => { closeModal('userModal'); if (isSelfEdit) { checkSession(); } else { _tabLoadedAt.users = 0; loadUsers(); } }, 1200);
   };
   if (row > 0) {
     google.script.run.withSuccessHandler(handler).withFailureHandler(e => { out.innerHTML = '<div class="result err">' + e.message + '</div>'; }).updateUser(row, data);
@@ -1925,7 +1932,7 @@ function confirmDeleteUser(rowNum, username) {
   google.script.run
     .withSuccessHandler(r => {
       if (r.error) { toast('خطأ: ' + r.error, 'err'); return; }
-      toast('✅ تم الحذف'); loadUsers();
+      toast('✅ تم الحذف'); _tabLoadedAt.users = 0; loadUsers();
     })
     .withFailureHandler(e => toast('خطأ: ' + e.message, 'err'))
     .deleteUser(rowNum);
@@ -1935,9 +1942,10 @@ function confirmDeleteUser(rowNum, username) {
 // سجل العمليات
 // ═══════════════════════════════════════════════
 function loadActivity() {
+  if (_activityData.length && _tabLoadedAt.activity && Date.now() - _tabLoadedAt.activity < 60000) { filterActivity(); return; }
   document.getElementById('activityBody').innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:#718096">جارٍ التحميل...</td></tr>';
   google.script.run
-    .withSuccessHandler(freshGuard_(renderActivity))
+    .withSuccessHandler(freshGuard_(function(d){ _tabLoadedAt.activity = Date.now(); renderActivity(d); }))
     .withFailureHandler(e => toast('خطأ: ' + e.message, 'err'))
     .getActivityLog(200);
 }
@@ -2162,10 +2170,11 @@ function toast(msg,type=''){
 // ═══════════════════════════════════════════════
 
 function loadMaintenance() {
+  if (S.maintenanceList.length && _tabLoadedAt.maintenance && Date.now() - _tabLoadedAt.maintenance < 90000) { _applyMaintenanceFilters(); return; }
   const tbody = document.getElementById('maintenanceBody');
   if (tbody) tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:20px;color:#718096">جارٍ التحميل...</td></tr>';
   google.script.run
-    .withSuccessHandler(freshGuard_(function(d){ renderMaintenance(d && d.error ? [] : d); if (d && d.error) toast('خطأ الصيانة: ' + d.error, 'err'); }))
+    .withSuccessHandler(freshGuard_(function(d){ _tabLoadedAt.maintenance = Date.now(); renderMaintenance(d && d.error ? [] : d); if (d && d.error) toast('خطأ الصيانة: ' + d.error, 'err'); }))
     .withFailureHandler(e => toast('خطأ تحميل الصيانة: ' + e.message, 'err'))
     .getMaintenanceList();
 }
@@ -2324,7 +2333,7 @@ function saveMaintenance() {
     btn.disabled = false;
     if (r && r.error) { out.innerHTML = '<div class="result err">' + escHtml(r.error) + '</div>'; return; }
     out.innerHTML = '<div class="result">✅ تم الحفظ بنجاح</div>';
-    setTimeout(() => { closeModal('maintenanceModal'); loadMaintenance(); }, 900);
+    setTimeout(() => { closeModal('maintenanceModal'); _tabLoadedAt.maintenance = 0; loadMaintenance(); }, 900);
   };
   const fail = e => { btn.disabled = false; toast('خطأ: ' + e.message, 'err'); };
   if (rowNum) {
@@ -2339,7 +2348,7 @@ function confirmDeleteMaintenance(row) {
   google.script.run
     .withSuccessHandler(r => {
       if (r && r.error) { toast('خطأ: ' + r.error, 'err'); return; }
-      toast('✅ تم الحذف'); loadMaintenance();
+      toast('✅ تم الحذف'); _tabLoadedAt.maintenance = 0; loadMaintenance();
     })
     .withFailureHandler(e => toast('خطأ: ' + e.message, 'err'))
     .deleteMaintenance(row);
