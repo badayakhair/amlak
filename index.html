@@ -132,6 +132,8 @@
 <div id="page-manage" class="page">
   <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
     <button data-perm="contracts.add" class="btn btn-success" onclick="openContractModal('add')">+ إضافة عقد جديد</button>
+    <button data-perm="contracts.add" class="btn" onclick="importEjarPdf()" title="رفع PDF من منصة إيجار واستخراج البيانات تلقائياً">📄 استيراد من إيجار</button>
+    <input type="file" id="ejarPdfFile" accept=".pdf" hidden onchange="_onEjarFileSelected_(this)">
     <button class="btn" onclick="loadData()">🔄 تحديث البيانات</button>
   </div>
   <div class="card" style="padding:12px">
@@ -746,7 +748,7 @@
 
 <script src="config.js?v=7"></script>
 <script src="api.js?v=7"></script>
-<script src="app.js?v=8"></script>
+<script src="app.js?v=9"></script>
 
 
 <!-- Modal تغيير كلمة المرور -->
@@ -900,6 +902,21 @@
     <div class="modal-footer">
       <button class="btn" onclick="closeModal('maintenanceModal')">إلغاء</button>
       <button class="btn btn-success" id="mntSaveBtn" onclick="saveMaintenance()">💾 حفظ</button>
+    </div>
+  </div>
+</div>
+
+<!-- مودال معاينة بيانات PDF إيجار -->
+<div id="ejarPreviewModal" class="modal-overlay">
+  <div class="modal-box" style="max-width:500px">
+    <div class="modal-hdr">
+      <span>📄 استيراد من إيجار — مراجعة البيانات</span>
+      <button class="modal-close" onclick="closeModal('ejarPreviewModal')">✕</button>
+    </div>
+    <div class="modal-body" id="ejarPreviewBody"></div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('ejarPreviewModal')">إلغاء</button>
+      <button class="btn btn-success" onclick="applyEjarData_()">تطبيق على النموذج ✓</button>
     </div>
   </div>
 </div>
