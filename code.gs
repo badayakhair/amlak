@@ -59,6 +59,11 @@ const TC = {
 var __CONTRACTS_CACHE = null;
 var __BUILDINGS_CACHE = null;
 var __PAYMENTS_CACHE = null;
+
+// ── كاش CacheService للبيانات الثابتة نسبياً (مشترك بين جميع الطلبات) ──
+function _scGet_(k){try{var v=CacheService.getScriptCache().get(k);return v?JSON.parse(v):null;}catch(e){return null;}}
+function _scSet_(k,v,ttl){try{var s=JSON.stringify(v);if(s.length<90000)CacheService.getScriptCache().put(k,s,ttl);}catch(e){}}
+function _scDel_(k){try{CacheService.getScriptCache().remove(k);}catch(e){}}
 function cloneData_(v) {
   if (v === null || v === undefined) return v;
   if (Object.prototype.toString.call(v) === '[object Date]') return new Date(v.getTime());
@@ -1140,14 +1145,18 @@ function sendToBuildingCustom(building, message, statusFilter) {
 function logMessage(d) {
   const sheet = getOrCreateSheet(CFG.SHEETS.LOG, ['التاريخ','الاسم','الجوال','الرسالة','الحالة','المبنى','الوحدة']);
   sheet.appendRow([fmtDatetime(new Date()), sanitizeCell_(d.name), sanitizeCell_(d.phone), sanitizeCell_(d.message), d.status, sanitizeCell_(d.building), sanitizeCell_(d.unit)]);
+  _scDel_('MSG_LOG');
 }
 
 function getMessageLog() {
   const auth = requirePerm_('log.view'); if (auth) return [];
+  var cached = _scGet_('MSG_LOG'); if (cached) return cached;
   const sheet = getSheet(CFG.SHEETS.LOG);
   if (!sheet) return [];
   const data = sheet.getDataRange().getValues();
-  return data.slice(1).reverse().slice(0,100).map(r=>({date:r[0],name:r[1],phone:r[2],message:r[3],status:r[4],building:r[5],unit:r[6]}));
+  var result = data.slice(1).reverse().slice(0,100).map(r=>({date:r[0],name:r[1],phone:r[2],message:r[3],status:r[4],building:r[5],unit:r[6]}));
+  _scSet_('MSG_LOG', result, 180);
+  return result;
 }
 
 // ───────────────────────────────────────────────
@@ -1654,10 +1663,11 @@ function ensureUsersSheet() {
 
 function getUsers() {
   const auth = requirePerm_('users.manage'); if (auth) return [];
+  var cached = _scGet_('USERS_LIST'); if (cached) return cached;
   const sheet = getSheet(CFG.SHEETS.USERS);
   if (!sheet) return [];
   const rows = sheet.getDataRange().getValues().slice(1);
-  return rows.map((r, i) => {
+  var result = rows.map((r, i) => {
     var customPermsRaw = str(r[UC.CUSTOM_PERMS]);
     var customPerms = [];
     if (customPermsRaw) {
@@ -1675,6 +1685,8 @@ function getUsers() {
       customPerms: customPerms
     };
   }).filter(u => u.username);
+  _scSet_('USERS_LIST', result, 600);
+  return result;
 }
 // [تم حذف نسخة مكررة قديمة من الدالة: login]
 
@@ -1748,6 +1760,7 @@ function deleteUser(rowNum) {
   if (username === 'admin') return { error: 'لا يمكن حذف حساب الأدمن الافتراضي' };
   sheet.deleteRow(rowNum);
   SpreadsheetApp.flush();
+  _scDel_('USERS_LIST');
   logActivity(currentUser() || 'system', 'delete', 'user', 'حذف المستخدم: ' + username);
   return { success: true };
 }
@@ -1799,6 +1812,7 @@ function logActivity(username, action, entity, details) {
       sanitizeCell_(details || ''),
       ''
     ]);
+    _scDel_('ACTIVITY_LOG');
     // قلّم السجل لـ 5000 سجل لتجنب التضخم
     const lastRow = sheet.getLastRow();
     if (lastRow > 5001) {
@@ -2417,6 +2431,7 @@ function addUser(data) {
     fmtDatetime(new Date()), '', customPermsJson
   ]);
   SpreadsheetApp.flush();
+  _scDel_('USERS_LIST');
   logActivity(currentUser() || 'system', 'add', 'user', 'إضافة مستخدم: ' + data.username);
   return { success: true, message: 'تم إنشاء المستخدم' };
 }
@@ -2441,6 +2456,7 @@ function updateUser(rowNum, data) {
     sheet.getRange(rowNum, UC.CUSTOM_PERMS+1).setValue(cp);
   }
   SpreadsheetApp.flush();
+  _scDel_('USERS_LIST');
   bumpUserPermVersion_(targetUsername);
   logActivity(currentUser() || 'system', 'update', 'user', 'تعديل مستخدم في الصف ' + rowNum + ' — تم إبطال جلساته القديمة');
   return { success: true, message: 'تم تحديث المستخدم' };
@@ -2708,6 +2724,7 @@ function sendPaymentReminders(useAI) {
 function getActivityLog(limit) {
   const auth = requirePerm_('activity.view'); if (auth) return [];
   limit = parseInt(limit, 10) || 200;
+  var cached = _scGet_('ACTIVITY_LOG'); if (cached) return cached;
   const sheet = getSheet(CFG.SHEETS.ACTIVITY);
   if (!sheet) return [];
   const lastRow = sheet.getLastRow();
@@ -2715,7 +2732,9 @@ function getActivityLog(limit) {
   const take = Math.min(limit, lastRow - 1);
   const start = Math.max(2, lastRow - take + 1);
   const data = sheet.getRange(start, 1, take, Math.max(5, sheet.getLastColumn())).getValues();
-  return data.reverse().map(r => ({ time:str(r[AC.TIMESTAMP]), username:str(r[AC.USERNAME]), action:str(r[AC.ACTION]), entity:str(r[AC.ENTITY]), details:str(r[AC.DETAILS]) }));
+  var result = data.reverse().map(r => ({ time:str(r[AC.TIMESTAMP]), username:str(r[AC.USERNAME]), action:str(r[AC.ACTION]), entity:str(r[AC.ENTITY]), details:str(r[AC.DETAILS]) }));
+  _scSet_('ACTIVITY_LOG', result, 120);
+  return result;
 }
 
 function pruneBackups(folder, keep) {
@@ -3231,6 +3250,7 @@ function ensureMaintenanceSheet_() {
 function getMaintenanceList() {
   try {
     var auth = requireMaintenancePerm_('maintenance.view'); if (auth) return auth;
+    var cached = _scGet_('MAINT_LIST'); if (cached) return cached;
     var sheet = ensureMaintenanceSheet_();
     var data  = sheet.getDataRange().getValues();
     if (data.length <= 1) return [];
@@ -3263,6 +3283,7 @@ function getMaintenanceList() {
         createdAt:       String(row[13] || '')
       });
     }
+    _scSet_('MAINT_LIST', result, 300);
     return result;
   } catch (e) {
     return { error: e.message };
@@ -3298,6 +3319,7 @@ function addMaintenance(data) {
       false
     ]);
     SpreadsheetApp.flush();
+    _scDel_('MAINT_LIST');
     try { logActivity(username, 'إضافة', 'صيانة', (data.building || '') + ' - ' + String(data.description || '').substring(0, 50)); } catch(e) {}
     return { success: true, message: 'تم إضافة طلب الصيانة' };
   });
@@ -3332,6 +3354,7 @@ function updateMaintenance(rowNum, data) {
       sanitizeCell_(data.notes       || '')
     ]]);
     SpreadsheetApp.flush();
+    _scDel_('MAINT_LIST');
     var username = currentUser() || 'نظام';
     try { logActivity(username, 'تعديل', 'صيانة', (data.building || '') + ' - ' + String(data.description || '').substring(0, 50)); } catch(e) {}
     return { success: true, message: 'تم تحديث طلب الصيانة' };
@@ -3353,6 +3376,7 @@ function deleteMaintenance(rowNum) {
 
     sheet.getRange(rowNum, 15).setValue(true);
     SpreadsheetApp.flush();
+    _scDel_('MAINT_LIST');
     var username = currentUser() || 'نظام';
     try { logActivity(username, 'حذف', 'صيانة', 'طلب صيانة صف ' + rowNum); } catch(e) {}
     return { success: true, message: 'تم حذف طلب الصيانة' };
