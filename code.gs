@@ -117,6 +117,7 @@ function doGet(e) {
 function getContracts() {
   const auth = requirePerm_('contracts.view'); if (auth) return [];
   if (__CONTRACTS_CACHE) return cloneData_(__CONTRACTS_CACHE);
+  var _sc = _scGet_('ctr_v1'); if (_sc) { __CONTRACTS_CACHE = _sc; return cloneData_(__CONTRACTS_CACHE); }
   const sheet = getSheet(CFG.SHEETS.CONTRACTS);
   if (!sheet) { __CONTRACTS_CACHE = []; return []; }
   const rows  = sheet.getDataRange().getValues().slice(1);
@@ -149,12 +150,14 @@ function getContracts() {
       daysLeft,
     };
   }).filter(c => c && c.tenant);
+  _scSet_('ctr_v1', __CONTRACTS_CACHE, 120);
   return cloneData_(__CONTRACTS_CACHE);
 }
 
 function getBuildings() {
   const auth = requirePerm_('buildings.view'); if (auth) return [];
   if (__BUILDINGS_CACHE) return cloneData_(__BUILDINGS_CACHE);
+  var _sc = _scGet_('bld_v1'); if (_sc) { __BUILDINGS_CACHE = _sc; return cloneData_(__BUILDINGS_CACHE); }
   let sheet = getSheet(CFG.SHEETS.BUILDINGS);
   if (!sheet) { __BUILDINGS_CACHE = inferBuildingsFromContracts(); return cloneData_(__BUILDINGS_CACHE); }
   const rows = sheet.getDataRange().getValues().slice(1);
@@ -169,6 +172,7 @@ function getBuildings() {
       notes:      str(r[BC.NOTES]),
     };
   }).filter(b => b && b.name && b.name !== 'الإجمالي');
+  _scSet_('bld_v1', __BUILDINGS_CACHE, 120);
   return cloneData_(__BUILDINGS_CACHE);
 }
 
@@ -225,11 +229,12 @@ function inferTenantsFromContracts() {
 
 function getTenantHistory() {
   const auth = requirePerm_('tenants.view'); if (auth) return [];
+  var _sc = _scGet_('tnt_v1'); if (_sc) return _sc;
   const sheet = getSheet(CFG.SHEETS.TENANTS);
   // إذا الشيت غير موجود، استخرج تلقائياً من العقود
   if (!sheet) return inferTenantsFromContracts();
   const rows = sheet.getDataRange().getValues().slice(1);
-  return rows.map((r,i) => ({
+  var _result = rows.map((r,i) => ({
     row:            i+2,
     name:           str(r[TC.NAME]),
     phone:          cleanPhoneValue_(r[TC.PHONE]),
@@ -243,6 +248,8 @@ function getTenantHistory() {
     regularityScore:str(r[TC.REGULARITY_SCORE]),
     notes:          str(r[TC.NOTES]),
   })).filter(t => t.name);
+  _scSet_('tnt_v1', _result, 120);
+  return _result;
 }
 
 // ───────────────────────────────────────────────
@@ -900,6 +907,7 @@ function addBuilding(data) {
     sanitizeCell_(data.notes||'')
   ]);
   SpreadsheetApp.flush();
+  invalidateRuntimeCaches_();
   try { logActivity(currentUser() || 'system', 'إضافة', 'مباني', 'مبنى جديد: ' + (data.name||'')); } catch(e) {}
   return {success:true, message:'تمت إضافة المبنى بنجاح'};
   });
@@ -920,6 +928,7 @@ function updateBuilding(rowNum, data) {
     [BC.NOTES, sanitizeCell_(data.notes||'')]
   ].forEach(([col,val]) => sheet.getRange(rowNum, col+1).setValue(val));
   SpreadsheetApp.flush();
+  invalidateRuntimeCaches_();
   try { logActivity(currentUser() || 'system', 'تعديل', 'مباني', 'تعديل مبنى صف ' + rowNum); } catch(e) {}
   return {success:true, message:'تم تحديث المبنى'};
   });
@@ -946,6 +955,7 @@ function archiveBuilding(rowNum) {
     sheet.getRange(rowNum, BC.ARCHIVED+1).setValue('نعم');
     sheet.getRange(rowNum, BC.ARCHIVED_AT+1).setValue(archivedAt);
     sheet.getRange(rowNum, BC.ARCHIVED_BY+1).setValue(archivedBy);
+    invalidateRuntimeCaches_();
     try { logActivity(archivedBy, 'أرشفة', 'مباني', 'أرشفة مبنى: ' + name + (hasContracts ? ' — توجد عقود مرتبطة، لذلك لم يتم الحذف النهائي' : '')); } catch(e) {}
     return {success:true, message:'تمت أرشفة المبنى دون حذف العقود المرتبطة'};
   });
@@ -993,6 +1003,7 @@ function rebuildTenantRecords() {
     ]);
   });
   SpreadsheetApp.flush();
+  _scDel_('tnt_v1');
   return {success:true, count:Object.keys(tenantMap).length};
   });
 }
@@ -1479,11 +1490,13 @@ function parseStoredDate_(v) {
 
 function getPaymentsRows_() {
   if (__PAYMENTS_CACHE) return cloneData_(__PAYMENTS_CACHE);
+  var _sc = _scGet_('pay_v1'); if (_sc) { __PAYMENTS_CACHE = _sc; return cloneData_(__PAYMENTS_CACHE); }
   const sheet = getSheet(CFG.SHEETS.PAYMENTS);
   if (!sheet || sheet.getLastRow() < 2) { __PAYMENTS_CACHE = []; return []; }
   __PAYMENTS_CACHE = sheet.getDataRange().getValues().slice(1).map(function(r){
     return { date: parseStoredDate_(r[PC.TIMESTAMP]), amount: parseNum(r[PC.AMOUNT]), row: r[PC.ROW], tenant: str(r[PC.TENANT]), building: str(r[PC.BUILDING]), unit: str(r[PC.UNIT]), username: str(r[PC.USERNAME]), contractId: str(r[PC.CONTRACT_ID]), before: parseNum(r[PC.PAID_BEFORE]), after: parseNum(r[PC.PAID_AFTER]), remaining: parseNum(r[PC.REMAINING_AFTER]), notes: str(r[PC.NOTES]) };
   }).filter(function(p){ return p.date && p.amount !== 0; });
+  _scSet_('pay_v1', __PAYMENTS_CACHE, 120);
   return cloneData_(__PAYMENTS_CACHE);
 }
 
@@ -1629,6 +1642,7 @@ function restoreBuilding(rowNum) {
     sheet.getRange(rowNum, BC.ARCHIVED+1).setValue('');
     sheet.getRange(rowNum, BC.ARCHIVED_AT+1).setValue('');
     sheet.getRange(rowNum, BC.ARCHIVED_BY+1).setValue('');
+    invalidateRuntimeCaches_();
     try { logActivity(currentUser() || 'system', 'استرجاع', 'مباني', 'استرجاع مبنى مؤرشف: ' + name + ' — الصف: ' + rowNum); } catch(e) {}
     return {success:true, message:'تم استرجاع المبنى وعودته للقوائم النشطة'};
   });
@@ -1825,11 +1839,6 @@ function logActivity(username, action, entity, details) {
 
 function getAllData() {
   const auth = requireLogin_(); if (auth) return auth;
-
-  // تصفير كاش الطلب حتى لا تظهر بيانات قديمة بعد الإضافة/التعديل
-  __CONTRACTS_CACHE = null;
-  __BUILDINGS_CACHE = null;
-  __PAYMENTS_CACHE = null;
 
   const canAlerts = hasPermission('alerts.view');
   const canContracts = hasPermission('contracts.view');
@@ -2403,6 +2412,10 @@ function invalidateRuntimeCaches_() {
   __CONTRACTS_CACHE = null;
   __BUILDINGS_CACHE = null;
   __PAYMENTS_CACHE = null;
+  _scDel_('ctr_v1');
+  _scDel_('bld_v1');
+  _scDel_('tnt_v1');
+  _scDel_('pay_v1');
 }
 
 function validatePasswordPolicy_(password) {

@@ -2361,59 +2361,55 @@ function confirmDeleteMaintenance(row) {
 (function () {
 
   const CACHE_KEY = "amlak_cache_v2";
+  const CACHE_MAX_AGE_MS   = 30 * 60 * 1000; // 30 min — max display age
+  const CACHE_SKIP_SVRS_MS =  3 * 60 * 1000; // 3 min — skip server if cache is this fresh
 
-  const originalApply = window.applyAllData_;
+  const originalApply    = window.applyAllData_;
   const originalLoadData = window.loadData;
 
   if (typeof originalApply === "function") {
-
     window.applyAllData_ = function (data) {
-
       try {
-        localStorage.setItem(
-          CACHE_KEY,
-          JSON.stringify({
-            time: Date.now(),
-            username: (_currentUser && _currentUser.username) ? _currentUser.username : '',
-            data: data
-          })
-        );
+        localStorage.setItem(CACHE_KEY, JSON.stringify({
+          time: Date.now(),
+          username: (_currentUser && _currentUser.username) ? _currentUser.username : '',
+          data: data
+        }));
       } catch (e) {}
-
       return originalApply(data);
     };
-
   }
 
-  const CACHE_MAX_AGE_MS = 30 * 60 * 1000; // 30 دقيقة
-
   window.loadData = function () {
-
     try {
-
       const cached = localStorage.getItem(CACHE_KEY);
-
       if (cached) {
-
-        const obj = JSON.parse(cached);
-        const age = Date.now() - (obj.time || 0);
-        const currentUsername = (_currentUser && _currentUser.username) ? _currentUser.username : '';
-        // تجاهل الكاش إذا كان لمستخدم مختلف أو منتهي الصلاحية
-        const sameUser = obj.username && currentUsername && obj.username === currentUsername;
-
-        if (obj && obj.data && age < CACHE_MAX_AGE_MS && sameUser) {
+        const obj  = JSON.parse(cached);
+        const age  = Date.now() - (obj.time || 0);
+        const user = (_currentUser && _currentUser.username) ? _currentUser.username : '';
+        const sameUser = obj.username && user && obj.username === user;
+        if (obj && obj.data && sameUser && age < CACHE_MAX_AGE_MS) {
           originalApply(obj.data);
+          if (age < CACHE_SKIP_SVRS_MS) return; // cache is fresh — skip server round-trip
         } else {
           localStorage.removeItem(CACHE_KEY);
         }
       }
-
     } catch (e) {
       localStorage.removeItem(CACHE_KEY);
     }
-
     return originalLoadData();
   };
+
+  // debounce silentRefresh so rapid mutations don't stack server calls
+  var _srTimer = null;
+  var _srOrig  = window.silentRefresh;
+  if (typeof _srOrig === 'function') {
+    window.silentRefresh = function () {
+      if (_srTimer) clearTimeout(_srTimer);
+      _srTimer = setTimeout(function () { _srTimer = null; _srOrig(); }, 600);
+    };
+  }
 
 })();
 
