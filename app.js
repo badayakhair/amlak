@@ -1351,54 +1351,116 @@ function loadAlerts() {
     .getUpcomingDueDates(days);
 }
 
+// كاش بيانات التنبيهات + حالة الفلتر النشط
+var _alertsData   = [];
+var _alertsFilter = null; // null = الكل، أو 'overdue'/'critical'/'soon'/'upcoming'
+
+window.clearAlertsFilter = function() { _alertsFilter = null; _updateAlertCardStyles_(); _renderAlertsTable_(); };
+function filterAlerts(urgency) {
+  _alertsFilter = (_alertsFilter === urgency) ? null : urgency; // نقرة ثانية تلغي الفلتر
+  _updateAlertCardStyles_();
+  _renderAlertsTable_();
+}
+
+function _updateAlertCardStyles_() {
+  var cards = [
+    { id: 'aOverdue',  filter: 'overdue'  },
+    { id: 'aCritical', filter: 'critical' },
+    { id: 'aSoon',     filter: 'soon'     },
+    { id: 'aUpcoming', filter: 'upcoming' }
+  ];
+  cards.forEach(function(m) {
+    var el = document.getElementById(m.id); if (!el) return;
+    var card = el.closest('.metric'); if (!card) return;
+    var isActive = _alertsFilter === m.filter;
+    var hasFilter = !!_alertsFilter;
+    card.style.opacity = (hasFilter && !isActive) ? '0.45' : '1';
+    card.style.boxShadow = isActive ? '0 0 0 3px var(--blue)' : '';
+    card.style.transform = isActive ? 'scale(1.03)' : '';
+  });
+}
+
+function _renderAlertsTable_() {
+  var list = document.getElementById('alertsList');
+  var view = _alertsFilter ? _alertsData.filter(function(d){ return d.urgency === _alertsFilter; }) : _alertsData;
+  var labelMap = { overdue:'متأخرة', critical:'عاجل', soon:'قريبة', upcoming:'قادمة' };
+  var filterBar = _alertsFilter
+    ? '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;padding:6px 10px;background:var(--bg2);border-radius:8px;font-size:13px">' +
+      '<span>الفلتر: <strong>' + (labelMap[_alertsFilter]||_alertsFilter) + '</strong> (' + view.length + ' استحقاق)</span>' +
+      '<button onclick="window.clearAlertsFilter()" style="margin-right:auto;padding:2px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer">إلغاء الفلتر ✕</button>' +
+      '</div>'
+    : '';
+  if (!view.length) {
+    list.innerHTML = filterBar + '<div style="text-align:center;padding:30px;color:var(--green)">✅ لا توجد استحقاقات في هذه الفئة</div>';
+    return;
+  }
+  var badgeMap = {
+    'overdue':  ['<span class="badge b-red">متأخرة</span>',  'var(--red)'],
+    'critical': ['<span class="badge b-red">عاجل</span>',     'var(--red)'],
+    'soon':     ['<span class="badge b-amber">قريبة</span>',  'var(--amber)'],
+    'upcoming': ['<span class="badge b-blue">قادمة</span>',   'var(--blue)']
+  };
+  list.innerHTML = filterBar + '<div class="tbl-wrap"><table>' +
+    '<thead><tr>' +
+    '<th>الاستعجال</th><th>المستأجر</th><th>المبنى</th><th>وحدة</th>' +
+    '<th>الجدولة</th><th>تاريخ الاستحقاق</th><th>الأيام</th><th>الإيجار</th><th>إجراء</th>' +
+    '</tr></thead><tbody>' +
+    view.map(function(d) {
+      var bp = badgeMap[d.urgency] || ['', ''];
+      var badge = bp[0], color = bp[1];
+      var daysLbl = d.daysUntil < 0 ? ('متأخر ' + Math.abs(d.daysUntil) + ' يوم') :
+                   d.daysUntil === 0 ? 'اليوم!' : (d.daysUntil + ' يوم');
+      return '<tr>' +
+        '<td>' + badge + '</td>' +
+        '<td><strong>' + escHtml(d.tenant) + '</strong></td>' +
+        '<td>' + escHtml(d.building) + '</td><td>' + escHtml(d.unit) + '</td>' +
+        '<td><span style="font-size:12px;color:#718096">' + (escHtml(d.schedule)||'—') + '</span></td>' +
+        '<td style="font-size:13px;font-weight:500">' + d.dueDate + '</td>' +
+        '<td style="color:' + color + ';font-weight:600">' + daysLbl + '</td>' +
+        '<td>' + nf(d.rent) + ' ر.س</td>' +
+        '<td>' + smsButtonHtml('SMS', d.tenant, d.phone, d.rent||0, 'استحقاق دفعة قادمة') + '</td>' +
+        '</tr>';
+    }).join('') + '</tbody></table></div>';
+}
+
 function renderAlerts(data) {
-  const list = document.getElementById('alertsList');
-  const metrics = document.getElementById('alertsMetrics');
-  if (!data || !data.length) {
+  _alertsData   = data || [];
+  _alertsFilter = null; // إعادة تعيين الفلتر عند تحميل بيانات جديدة
+  var metrics = document.getElementById('alertsMetrics');
+  var list    = document.getElementById('alertsList');
+  if (!_alertsData.length) {
     metrics.style.display = 'none';
     list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--green)">✅ لا توجد استحقاقات قريبة</div>';
     return;
   }
-
-  // إحصائيات سريعة
-  const overdue  = data.filter(d => d.urgency === 'overdue').length;
-  const critical = data.filter(d => d.urgency === 'critical').length;
-  const soon     = data.filter(d => d.urgency === 'soon').length;
-  const upcoming = data.filter(d => d.urgency === 'upcoming').length;
+  var overdue  = _alertsData.filter(function(d){ return d.urgency === 'overdue';   }).length;
+  var critical = _alertsData.filter(function(d){ return d.urgency === 'critical';  }).length;
+  var soon     = _alertsData.filter(function(d){ return d.urgency === 'soon';      }).length;
+  var upcoming = _alertsData.filter(function(d){ return d.urgency === 'upcoming';  }).length;
   metrics.style.display = 'grid';
   document.getElementById('aOverdue').textContent  = overdue;
   document.getElementById('aCritical').textContent = critical;
   document.getElementById('aSoon').textContent     = soon;
   document.getElementById('aUpcoming').textContent = upcoming;
 
-  list.innerHTML = `<div class="tbl-wrap"><table>
-    <thead><tr>
-      <th>الاستعجال</th><th>المستأجر</th><th>المبنى</th><th>وحدة</th>
-      <th>الجدولة</th><th>تاريخ الاستحقاق</th><th>الأيام</th><th>الإيجار</th><th>إجراء</th>
-    </tr></thead>
-    <tbody>${data.map(d => {
-      const map = {
-        'overdue':  ['<span class="badge b-red">متأخرة</span>',     'var(--red)'],
-        'critical': ['<span class="badge b-red">عاجل</span>',        'var(--red)'],
-        'soon':     ['<span class="badge b-amber">قريبة</span>',     'var(--amber)'],
-        'upcoming': ['<span class="badge b-blue">قادمة</span>',      'var(--blue)']
-      };
-      const [badge, color] = map[d.urgency] || ['', ''];
-      const daysLbl = d.daysUntil < 0 ? `متأخر ${Math.abs(d.daysUntil)} يوم` :
-                      d.daysUntil === 0 ? 'اليوم!' :
-                      `${d.daysUntil} يوم`;
-      return `<tr>
-        <td>${badge}</td>
-        <td><strong>${escHtml(d.tenant)}</strong></td>
-        <td>${escHtml(d.building)}</td><td>${escHtml(d.unit)}</td>
-        <td><span style="font-size:12px;color:#718096">${escHtml(d.schedule)||'—'}</span></td>
-        <td style="font-size:13px;font-weight:500">${d.dueDate}</td>
-        <td style="color:${color};font-weight:600">${daysLbl}</td>
-        <td>${nf(d.rent)} ر.س</td>
-        <td>${smsButtonHtml('SMS', d.tenant, d.phone, d.rent||0, 'استحقاق دفعة قادمة')}</td>
-      </tr>`;
-    }).join('')}</tbody>
-  </table></div>`;
+  // تفعيل البطاقات كأزرار فلترة (cursor + onclick)
+  var cardCfg = [
+    { id:'aOverdue',  filter:'overdue'  },
+    { id:'aCritical', filter:'critical' },
+    { id:'aSoon',     filter:'soon'     },
+    { id:'aUpcoming', filter:'upcoming' }
+  ];
+  cardCfg.forEach(function(m) {
+    var el = document.getElementById(m.id); if (!el) return;
+    var card = el.closest('.metric'); if (!card) return;
+    card.style.cursor = 'pointer';
+    card.style.transition = 'opacity 0.15s, box-shadow 0.15s, transform 0.12s';
+    card.title = 'انقر للفلترة — انقر مرة ثانية لإلغاء الفلتر';
+    card.onclick = (function(f){ return function(){ filterAlerts(f); }; })(m.filter);
+  });
+
+  _updateAlertCardStyles_();
+  _renderAlertsTable_();
 }
 
 
