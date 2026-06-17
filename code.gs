@@ -2563,21 +2563,55 @@ function getUpcomingDueDates(daysAhead) {
   const today = new Date();
   today.setHours(0,0,0,0);
   const contracts = getContracts().filter(c => c.status === 'ساري' || c.status === 'شارف على الانتهاء');
+
+  // لتحديد الأقساط الفائتة غير المسددة فعلاً: نوزّع الدفعات على الاستحقاقات
+  // الأقدم أولاً (نفس منطق تقرير أعمار الديون) حتى لا تظهر الأقساط المدفوعة كمتأخرة.
+  const payments = getPaymentsRows_();
+  const paidByContractId = {};
+  const paidByRow = {};
+  payments.forEach(function(p){
+    if (p.contractId) paidByContractId[p.contractId] = (paidByContractId[p.contractId] || 0) + p.amount;
+    if (p.row) paidByRow[p.row] = (paidByRow[p.row] || 0) + p.amount;
+  });
+  const stepMap = {'شهري':1,'3 أشهر':3,'6 أشهر':6,'سنوي':12};
+
   const upcoming  = [];
   contracts.forEach(c => {
     const dueDates = calculateDueDates(c.start, c.end, c.schedule);
-    dueDates.forEach(d => {
+    if (!dueDates.length) return;
+
+    const installment = Math.max(0, contractMonthlyRent_(c) * (stepMap[c.schedule] || 1));
+    // رصيد الدفعات المتاح لتغطية الأقساط الفائتة (الأقدم أولاً)
+    let paidCredit = payments.length ? ((c.id && paidByContractId[c.id]) || paidByRow[c.row] || 0) : parseNum(c.paid);
+
+    dueDates.slice().sort(function(a,b){ return new Date(a) - new Date(b); }).forEach(function(d){
       const dd = new Date(d); dd.setHours(0,0,0,0);
       const daysUntil = Math.round((dd - today) / 86400000);
-      if (daysUntil >= -3 && daysUntil <= daysAhead) {
-        upcoming.push({
-          tenant:c.tenant, phone:c.phone, building:c.building, unit:c.unit,
-          rent:c.rent, paid:c.paid, schedule:c.schedule,
-          dueDate:Utilities.formatDate(dd, 'Asia/Riyadh', 'yyyy/MM/dd'),
-          daysUntil:daysUntil, row:c.row,
-          urgency:daysUntil < 0 ? 'overdue' : daysUntil <= 3 ? 'critical' : daysUntil <= 7 ? 'soon' : 'upcoming'
-        });
+
+      let include = false;
+      if (daysUntil < 0) {
+        // قسط فائت: يبقى ظاهراً حتى السداد ولا يختفي بعد أيام، إلا إذا غطّته الدفعات
+        if (installment > 0) {
+          const covered = Math.min(installment, Math.max(0, paidCredit));
+          paidCredit -= covered;
+          include = (installment - covered) > 0.01;
+        } else {
+          // بلا قيمة قسط محسوبة — حافظ على السلوك القديم (آخر 3 أيام فقط)
+          include = daysUntil >= -3;
+        }
+      } else {
+        // قسط قادم: ضمن النافذة المختارة (السلوك كما هو)
+        include = daysUntil <= daysAhead;
       }
+      if (!include) return;
+
+      upcoming.push({
+        tenant:c.tenant, phone:c.phone, building:c.building, unit:c.unit,
+        rent:c.rent, paid:c.paid, schedule:c.schedule,
+        dueDate:Utilities.formatDate(dd, 'Asia/Riyadh', 'yyyy/MM/dd'),
+        daysUntil:daysUntil, row:c.row,
+        urgency:daysUntil < 0 ? 'overdue' : daysUntil <= 3 ? 'critical' : daysUntil <= 7 ? 'soon' : 'upcoming'
+      });
     });
   });
   upcoming.sort((a,b)=>a.daysUntil-b.daysUntil);
