@@ -1860,8 +1860,27 @@ function getAllData() {
     contracts: canContracts ? getContracts() : [],
     buildings: canBuildings ? getBuildings() : [],
     tenants: canTenants ? getTenantHistory() : [],
+    // سجل الدفعات المضغوط — يُحمّل مرة واحدة ليُعرض سجل أي عقد فوراً بلا طلب منفصل
+    // يُتاح لمن يملك عرض العقود (السجل العادي) أو تعديل الدفعات (سجل الأدمن)
+    payments: (canContracts || hasPermission('payments.edit')) ? getPaymentsForClient_() : [],
     topbarAlerts: getTopbarAlerts()
   };
+}
+
+// نسخة مضغوطة ومنسّقة من الدفعات للعرض الفوري في الواجهة (بدون طلب منفصل لكل عقد)
+function getPaymentsForClient_() {
+  return getPaymentsRows_().map(function(p){
+    return {
+      logRow:     p.logRow,
+      row:        p.row,
+      contractId: p.contractId || '',
+      date:       fmtDatetime(p.date),
+      username:   p.username || '—',
+      amount:     p.amount,
+      remaining:  p.remaining,
+      notes:      p.notes || ''
+    };
+  });
 }
 // [تم حذف نسخة مكررة قديمة من الدالة: getActivityLog]
 
