@@ -1501,8 +1501,8 @@ function getPaymentsRows_() {
   var _sc = _scGet_('pay_v1'); if (_sc) { __PAYMENTS_CACHE = _sc; return cloneData_(__PAYMENTS_CACHE); }
   const sheet = getSheet(CFG.SHEETS.PAYMENTS);
   if (!sheet || sheet.getLastRow() < 2) { __PAYMENTS_CACHE = []; return []; }
-  __PAYMENTS_CACHE = sheet.getDataRange().getValues().slice(1).map(function(r){
-    return { date: parseStoredDate_(r[PC.TIMESTAMP]), amount: parseNum(r[PC.AMOUNT]), row: r[PC.ROW], tenant: str(r[PC.TENANT]), building: str(r[PC.BUILDING]), unit: str(r[PC.UNIT]), username: str(r[PC.USERNAME]), contractId: str(r[PC.CONTRACT_ID]), before: parseNum(r[PC.PAID_BEFORE]), after: parseNum(r[PC.PAID_AFTER]), remaining: parseNum(r[PC.REMAINING_AFTER]), notes: str(r[PC.NOTES]) };
+  __PAYMENTS_CACHE = sheet.getDataRange().getValues().slice(1).map(function(r, i){
+    return { logRow: i + 2, date: parseStoredDate_(r[PC.TIMESTAMP]), amount: parseNum(r[PC.AMOUNT]), row: r[PC.ROW], tenant: str(r[PC.TENANT]), building: str(r[PC.BUILDING]), unit: str(r[PC.UNIT]), username: str(r[PC.USERNAME]), contractId: str(r[PC.CONTRACT_ID]), before: parseNum(r[PC.PAID_BEFORE]), after: parseNum(r[PC.PAID_AFTER]), remaining: parseNum(r[PC.REMAINING_AFTER]), notes: str(r[PC.NOTES]) };
   }).filter(function(p){ return p.date && p.amount !== 0; });
   _scSet_('pay_v1', __PAYMENTS_CACHE, 120);
   return cloneData_(__PAYMENTS_CACHE);
@@ -3464,40 +3464,33 @@ function getContractPaymentHistoryAdmin(rowNum) {
   rowNum = parseInt(rowNum, 10);
   if (!rowNum) return [];
 
+  // Look up contractId from cached contracts (avoids a raw sheet read)
   var contractId = '';
-  try {
-    var cSheet = getSheet(CFG.SHEETS.CONTRACTS);
-    if (cSheet && cSheet.getLastRow() >= rowNum) {
-      contractId = String(cSheet.getRange(rowNum, C.ID+1).getValue() || '');
-    }
-  } catch(e) {}
+  var contracts = getContracts();
+  var matchedContract = contracts.filter(function(c){ return c.row === rowNum; })[0];
+  if (matchedContract) contractId = matchedContract.id || '';
 
-  var sheet = getSheet(CFG.SHEETS.PAYMENTS);
-  if (!sheet || sheet.getLastRow() < 2) return [];
-
-  var data = sheet.getDataRange().getValues().slice(1);
-  var results = [];
-  for (var i = 0; i < data.length; i++) {
-    var r = data[i];
-    var cRow = parseInt(r[PC.ROW], 10);
-    var cId = String(r[PC.CONTRACT_ID] || '');
-    var match = (contractId && cId === contractId) || (!contractId && cRow === rowNum);
-    if (!match) continue;
-    var ts = r[PC.TIMESTAMP];
-    var dateStr = (ts instanceof Date) ? fmtDatetime(ts) : String(ts || '');
-    results.push({
-      logRow:      i + 2,
-      date:        dateStr,
-      username:    String(r[PC.USERNAME]       || '—'),
-      amount:      parseNum(r[PC.AMOUNT]),
-      before:      parseNum(r[PC.PAID_BEFORE]),
-      after:       parseNum(r[PC.PAID_AFTER]),
-      remaining:   parseNum(r[PC.REMAINING_AFTER]),
-      notes:       String(r[PC.NOTES]          || ''),
-      tenant:      String(r[PC.TENANT]         || ''),
-      contractRow: cRow
+  var results = getPaymentsRows_()
+    .filter(function(p) {
+      var cRow = parseInt(p.row, 10);
+      var cId = String(p.contractId || '');
+      return (contractId && cId === contractId) || (!contractId && cRow === rowNum);
+    })
+    .map(function(p) {
+      return {
+        logRow:      p.logRow,
+        date:        fmtDatetime(p.date),
+        username:    p.username || '—',
+        amount:      p.amount,
+        before:      p.before,
+        after:       p.after,
+        remaining:   p.remaining,
+        notes:       p.notes || '',
+        tenant:      p.tenant || '',
+        contractRow: parseInt(p.row, 10)
+      };
     });
-  }
+
   results.sort(function(a, b) { return b.logRow - a.logRow; });
   return results;
 }
