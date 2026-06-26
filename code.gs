@@ -64,6 +64,7 @@ var __PAYMENTS_CACHE = null;
 function _scGet_(k){try{var v=CacheService.getScriptCache().get(k);return v?JSON.parse(v):null;}catch(e){return null;}}
 function _scSet_(k,v,ttl){try{var s=JSON.stringify(v);if(s.length<90000)CacheService.getScriptCache().put(k,s,ttl);}catch(e){}}
 function _scDel_(k){try{CacheService.getScriptCache().remove(k);}catch(e){}}
+function _scDelAll_(keys){try{CacheService.getScriptCache().removeAll(keys);}catch(e){}}
 function cloneData_(v) {
   if (v === null || v === undefined) return v;
   if (Object.prototype.toString.call(v) === '[object Date]') return new Date(v.getTime());
@@ -407,6 +408,8 @@ function buildOccupancySummary_(contracts, buildings) {
 
 function getDashboardStats() {
   const auth = requireLogin_(); if (auth) return auth;
+  var _dck = 'dash_v1_' + (hasPermission('finance.view') ? '1' : '0');
+  var _dcached = _scGet_(_dck); if (_dcached) return _dcached;
 
   const contracts = getContracts();
   const buildings = getBuildings();
@@ -502,7 +505,7 @@ function getDashboardStats() {
     });
   }
 
-  return {
+  var _dashResult = {
     canViewFinance: canViewFinance,
     counts: {
       // واضح ومترابط: الساري وحده، وشارف وحده، والمنتهي وحده
@@ -528,10 +531,13 @@ function getDashboardStats() {
     urgentContracts: canViewFinance ? urgent.slice(0,15) : urgent.slice(0,15).map(function(c){ c.rent=0; c.paid=0; c.remaining=0; c.payPct=0; return c; }),
     noPayContracts:  canViewFinance ? noPay.slice(0,15) : noPay.slice(0,15).map(function(c){ c.rent=0; c.paid=0; c.remaining=0; c.payPct=0; return c; }),
   };
+  _scSet_(_dck, _dashResult, 300);
+  return _dashResult;
 }
 
 function getFinancialStats() {
   const auth = requirePerm_('finance.view'); if (auth) return auth;
+  var _fcached = _scGet_('fin_v1'); if (_fcached) return _fcached;
   const contracts = getContracts();
   const payments = getPaymentsRows_();
   const today     = new Date();
@@ -640,7 +646,7 @@ function getFinancialStats() {
   const currentMonthExpected = monthlyData[thisMonth + 1] ? monthlyData[thisMonth + 1].expected : 0;
   const currentYearPaid = yearCollected;
 
-  return {
+  var _finResult = {
     summary: {
       annualRent: Math.round(yearExpected),
       monthlyRent: Math.round(currentMonthExpected),
@@ -681,6 +687,8 @@ function getFinancialStats() {
     },
     aging: getAgingReport()
   };
+  _scSet_('fin_v1', _finResult, 300);
+  return _finResult;
 }
 
 function getArMonth(m) {
@@ -2412,10 +2420,9 @@ function invalidateRuntimeCaches_() {
   __CONTRACTS_CACHE = null;
   __BUILDINGS_CACHE = null;
   __PAYMENTS_CACHE = null;
-  _scDel_('ctr_v1');
-  _scDel_('bld_v1');
-  _scDel_('tnt_v1');
-  _scDel_('pay_v1');
+  // مسح كل مفاتيح الكاش المشتق في نداء شبكي واحد (removeAll) بدل عدة نداءات — أسرع للعمليات
+  _scDelAll_(['ctr_v1','bld_v1','tnt_v1','pay_v1','dash_v1_0','dash_v1_1','fin_v1',
+              'due_v1_0','due_v1_7','due_v1_14','due_v1_30','due_v1_60']);
 }
 
 function validatePasswordPolicy_(password) {
@@ -2560,6 +2567,8 @@ function calculateDueDates(startDate, endDate, schedule) {
 
 function getUpcomingDueDates(daysAhead) {
   daysAhead = daysAhead || 14;
+  var _ck = 'due_v1_' + daysAhead;
+  var _cached = _scGet_(_ck); if (_cached) return _cached;
   const today = new Date();
   today.setHours(0,0,0,0);
   const contracts = getContracts().filter(c => c.status === 'ساري' || c.status === 'شارف على الانتهاء');
@@ -2615,6 +2624,7 @@ function getUpcomingDueDates(daysAhead) {
     });
   });
   upcoming.sort((a,b)=>a.daysUntil-b.daysUntil);
+  _scSet_(_ck, upcoming, 300);
   return upcoming;
 }
 
