@@ -633,10 +633,9 @@ function renderTenants() {
 }
 
 function showTenantHistory(name) {
-  const card=document.getElementById('tenantHistoryCard');
   document.getElementById('tenantHistoryTitle').textContent='⏳ جارٍ تحميل سجل '+name+'...';
-  card.style.display='block';
-  card.scrollIntoView({behavior:'smooth'});
+  document.getElementById('tenantHistoryBody').innerHTML='<div style="padding:20px;text-align:center;color:#718096">جارٍ التحميل...</div>';
+  openModal('tenantHistoryModal');
 
   google.script.run
     .withSuccessHandler(data => {
