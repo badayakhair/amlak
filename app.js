@@ -225,8 +225,15 @@ function applyAllData_(d) {
   S.contracts = d.contracts || [];
   S.buildings = d.buildings || [];
   S.tenants = d.tenants || [];
+  S.payments = Array.isArray(d.payments) ? d.payments : (S.payments || []);
   S.loaded = true;
   renderDashboard(); renderDashAlerts(); populateAllSelects(); renderContracts(); renderManage(); renderBuildingsTable(); populateMapSelect(); populateAdminArchiveBuildingSelect(); renderTenants(); renderTopbarAlerts_(d.topbarAlerts);
+  // إذا كانت نافذة الدفعات مفتوحة، أعد رسم السجل بالبيانات المحدثة (يجلب رقم السجل الحقيقي للتعديل)
+  const _pm = document.getElementById('paymentModal');
+  if (_pm && _pm.style.display === 'flex') {
+    const _pr = parseInt((document.getElementById('payRow') || {}).value, 10);
+    if (_pr) loadContractPaymentHistory(_pr);
+  }
 }
 function loadData() {
   // نحفظ التوكن الحالي لنتجاهل الردود القديمة التي تعود بعد تغيير الجلسة
@@ -851,6 +858,18 @@ function savePayment() {
         renderTenants();
         renderContracts();
       }
+      // إدخال تفاؤلي في S.payments ليظهر السجل فوراً (logRow=0 مؤقت حتى يُستبدل بـ silentRefresh)
+      if (!Array.isArray(S.payments)) S.payments = [];
+      S.payments.push({
+        logRow: 0,
+        row: row,
+        contractId: c ? (c.id || '') : '',
+        date: _nowStamp_(),
+        username: (_currentUser && (_currentUser.name || _currentUser.username)) || '—',
+        amount: amt,
+        remaining: Number(r.remaining) || 0,
+        notes: ''
+      });
       // تحديث إجمالي المدفوع/المتبقي/نسبة التحصيل في لوحة التحكم فوراً
       if (S.stats && S.stats.financials) {
         const ff = S.stats.financials;
@@ -866,63 +885,87 @@ function savePayment() {
     .addPayment(row,amt);
 }
 
+// طابع زمني محلي بصيغة الخادم (yyyy/MM/dd HH:mm) للإدخال التفاؤلي المؤقت
+function _nowStamp_() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '/' + p(d.getMonth() + 1) + '/' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
 function loadContractPaymentHistory(row) {
   const box = document.getElementById('payHistory');
   if (!box) return;
-  box.innerHTML = '<div style="padding:8px;color:#718096">جارٍ التحميل...</div>';
+  row = parseInt(row, 10);
   const canEdit = hasPerm('payments.edit');
+
+  // المسار السريع: العرض الفوري من S.payments المحمّلة مسبقاً (بلا طلب شبكة)
+  if (Array.isArray(S.payments)) {
+    const c = (S.contracts || []).find(x => x.row === row);
+    const cid = c ? (c.id || '') : '';
+    const rows = S.payments
+      .filter(p => (cid && p.contractId === cid) || (!cid && parseInt(p.row, 10) === row))
+      .sort((a, b) => (Number(b.logRow) || 0) - (Number(a.logRow) || 0));
+    renderContractPaymentHistory_(box, rows, row, canEdit);
+    return;
+  }
+
+  // مسار احتياطي: عميل بنسخة مخزّنة قديمة قبل تحميل الدفعات مع البيانات
+  box.innerHTML = '<div style="padding:8px;color:#718096">جارٍ التحميل...</div>';
   const uiTimer = setTimeout(() => {
     if (box.innerHTML.includes('جارٍ التحميل')) {
-      box.innerHTML = `<div class="result err">استغرق التحميل وقتاً طويلاً. <button class="btn btn-sm" onclick="loadContractPaymentHistory(${parseInt(row)})">إعادة المحاولة</button></div>`;
+      box.innerHTML = `<div class="result err">استغرق التحميل وقتاً طويلاً. <button class="btn btn-sm" onclick="loadContractPaymentHistory(${row})">إعادة المحاولة</button></div>`;
     }
   }, 15000);
-  const onSuccess = rows => {
-    clearTimeout(uiTimer);
-    rows = rows || [];
-    if (!rows.length) { box.innerHTML = '<div style="padding:8px;color:#718096">لا توجد دفعات مسجلة لهذا العقد</div>'; return; }
-    const editTh = canEdit ? '<th></th>' : '';
-    const rowsHtml = rows.map(p => {
-      const remAfter = Number(p.remaining) || 0;
-      const remBefore = remAfter + Number(p.amount || 0);
-      const editTd = canEdit ? `<td><button class="btn btn-sm" style="font-size:11px;padding:2px 7px" onclick="openPaymentEditForm(${p.logRow},${p.amount})">✏️</button></td>` : '';
-      return `<tr>
-        <td style="font-size:11px;white-space:nowrap">${escHtml(p.date)}</td>
-        <td>${escHtml(p.username)}</td>
-        <td style="font-weight:600;color:var(--green);direction:ltr;text-align:left">+${nf(p.amount)}</td>
-        <td style="color:var(--amber)">${nf(remBefore)}</td>
-        <td style="color:${remAfter>0?'var(--red)':'var(--green)'}">${nf(remAfter)}</td>
-        <td style="font-size:12px">${escHtml(p.notes)||'—'}</td>${editTd}
-      </tr>`;
-    }).join('');
-    const editForm = canEdit ? `
-      <div id="editPaymentForm" style="display:none;margin-top:10px;padding:12px;background:#f7fafc;border-radius:8px;border:1px solid #e2e8f0">
-        <div style="font-weight:600;color:#1A3A5C;margin-bottom:8px">✏️ تعديل الدفعة المحددة</div>
-        <input type="hidden" id="editPayLogRow">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
-          <div><label style="font-size:12px;color:#718096;display:block;margin-bottom:4px">المبلغ الجديد (ر.س)</label>
-            <input type="number" id="editPayAmount" class="form-control" min="0.01" step="0.01"></div>
-          <div><label style="font-size:12px;color:#718096;display:block;margin-bottom:4px">سبب التصحيح (اختياري)</label>
-            <input type="text" id="editPayNotes" class="form-control" placeholder="اكتب السبب..."></div>
-        </div>
-        <div style="display:flex;gap:8px">
-          <button id="editPaySaveBtn" class="btn btn-primary btn-sm" onclick="savePaymentEdit(${parseInt(row)})">💾 حفظ التعديل</button>
-          <button class="btn btn-sm" onclick="cancelPaymentEdit()">إلغاء</button>
-        </div>
-        <div id="editPayResult" style="margin-top:8px"></div>
-      </div>` : '';
-    box.innerHTML = `<div class="tbl-wrap"><table><thead><tr>
-      <th>التاريخ</th><th>المستخدم</th><th>المبلغ</th><th>متبقي قبل</th><th>متبقي بعد</th><th>ملاحظات</th>${editTh}
-    </tr></thead><tbody>${rowsHtml}</tbody></table></div>${editForm}`;
-  };
-  const onFail = e => {
-    clearTimeout(uiTimer);
-    box.innerHTML = '<div class="result err">خطأ في تحميل سجل الدفعات: ' + escHtml(e.message) + '</div>';
-  };
+  const onSuccess = rows => { clearTimeout(uiTimer); renderContractPaymentHistory_(box, rows || [], row, canEdit); };
+  const onFail = e => { clearTimeout(uiTimer); box.innerHTML = '<div class="result err">خطأ في تحميل سجل الدفعات: ' + escHtml(e.message) + '</div>'; };
   if (canEdit) {
     google.script.run.withSuccessHandler(onSuccess).withFailureHandler(onFail).getContractPaymentHistoryAdmin(row);
   } else {
     google.script.run.withSuccessHandler(onSuccess).withFailureHandler(onFail).getContractPaymentHistory(row);
   }
+}
+
+function renderContractPaymentHistory_(box, rows, row, canEdit) {
+  rows = rows || [];
+  if (!rows.length) { box.innerHTML = '<div style="padding:8px;color:#718096">لا توجد دفعات مسجلة لهذا العقد</div>'; return; }
+  const editTh = canEdit ? '<th></th>' : '';
+  const rowsHtml = rows.map(p => {
+    const remAfter = Number(p.remaining) || 0;
+    const remBefore = remAfter + Number(p.amount || 0);
+    // زر التعديل يظهر فقط للدفعات ذات رقم سجل حقيقي (logRow>0) — يستثني الإدخال التفاؤلي المؤقت
+    const editTd = canEdit
+      ? (Number(p.logRow) > 0
+          ? `<td><button class="btn btn-sm" style="font-size:11px;padding:2px 7px" onclick="openPaymentEditForm(${p.logRow},${p.amount})">✏️</button></td>`
+          : '<td></td>')
+      : '';
+    return `<tr>
+      <td style="font-size:11px;white-space:nowrap">${escHtml(p.date)}</td>
+      <td>${escHtml(p.username)}</td>
+      <td style="font-weight:600;color:var(--green);direction:ltr;text-align:left">+${nf(p.amount)}</td>
+      <td style="color:var(--amber)">${nf(remBefore)}</td>
+      <td style="color:${remAfter>0?'var(--red)':'var(--green)'}">${nf(remAfter)}</td>
+      <td style="font-size:12px">${escHtml(p.notes)||'—'}</td>${editTd}
+    </tr>`;
+  }).join('');
+  const editForm = canEdit ? `
+    <div id="editPaymentForm" style="display:none;margin-top:10px;padding:12px;background:#f7fafc;border-radius:8px;border:1px solid #e2e8f0">
+      <div style="font-weight:600;color:#1A3A5C;margin-bottom:8px">✏️ تعديل الدفعة المحددة</div>
+      <input type="hidden" id="editPayLogRow">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+        <div><label style="font-size:12px;color:#718096;display:block;margin-bottom:4px">المبلغ الجديد (ر.س)</label>
+          <input type="number" id="editPayAmount" class="form-control" min="0.01" step="0.01"></div>
+        <div><label style="font-size:12px;color:#718096;display:block;margin-bottom:4px">سبب التصحيح (اختياري)</label>
+          <input type="text" id="editPayNotes" class="form-control" placeholder="اكتب السبب..."></div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button id="editPaySaveBtn" class="btn btn-primary btn-sm" onclick="savePaymentEdit(${parseInt(row)})">💾 حفظ التعديل</button>
+        <button class="btn btn-sm" onclick="cancelPaymentEdit()">إلغاء</button>
+      </div>
+      <div id="editPayResult" style="margin-top:8px"></div>
+    </div>` : '';
+  box.innerHTML = `<div class="tbl-wrap"><table><thead><tr>
+    <th>التاريخ</th><th>المستخدم</th><th>المبلغ</th><th>متبقي قبل</th><th>متبقي بعد</th><th>ملاحظات</th>${editTh}
+  </tr></thead><tbody>${rowsHtml}</tbody></table></div>${editForm}`;
 }
 
 function openPaymentEditForm(logRow, amount) {
@@ -977,8 +1020,14 @@ function savePaymentEdit(contractRow) {
           renderDashboard();
         }
       }
+      // تحديث تفاؤلي للمبلغ في S.payments وإعادة الرسم فوراً؛ silentRefresh يصحّح بقية السلسلة
+      if (Array.isArray(S.payments)) {
+        const pe = S.payments.find(p => Number(p.logRow) === logRow);
+        if (pe) pe.amount = newAmount;
+      }
+      loadContractPaymentHistory(contractRow);
+      cancelPaymentEdit();
       silentRefresh();
-      setTimeout(() => loadContractPaymentHistory(contractRow), 800);
     })
     .withFailureHandler(e => {
       if (btn) { btn.disabled = false; btn.textContent = '💾 حفظ التعديل'; }
