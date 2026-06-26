@@ -787,7 +787,7 @@ function saveContract() {
       ['searchInput','fBldg','fStatus','fType'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
     }
     silentRefresh();
-    setTimeout(()=>closeModal('contractModal'),1200);
+    setTimeout(()=>closeModal('contractModal'),600);
   };
   if(rowNum) google.script.run.withSuccessHandler(cb).withFailureHandler(e=>{btn.disabled=false;toast('خطأ: '+e.message,'err');}).updateContract(parseInt(rowNum),data);
   else google.script.run.withSuccessHandler(cb).withFailureHandler(e=>{btn.disabled=false;toast('خطأ: '+e.message,'err');}).addContract(data);
@@ -1024,7 +1024,7 @@ function saveBuilding() {
     document.getElementById('bModalResult').innerHTML=`<div class="result">✅ ${(r&&r.message)||'تم الحفظ'}</div>`;
     toast((r&&r.message)||'تم الحفظ');
     silentRefresh();
-    setTimeout(()=>closeModal('buildingModal'),1200);
+    setTimeout(()=>closeModal('buildingModal'),600);
   };
   if(rowNum) google.script.run.withSuccessHandler(cb).withFailureHandler(e=>{btn.disabled=false;toast('خطأ: '+e.message,'err');}).updateBuilding(parseInt(rowNum),data);
   else google.script.run.withSuccessHandler(cb).withFailureHandler(e=>{btn.disabled=false;toast('خطأ: '+e.message,'err');}).addBuilding(data);
@@ -2395,7 +2395,7 @@ function saveMaintenance() {
     btn.disabled = false;
     if (r && r.error) { out.innerHTML = '<div class="result err">' + escHtml(r.error) + '</div>'; return; }
     out.innerHTML = '<div class="result">✅ تم الحفظ بنجاح</div>';
-    setTimeout(() => { closeModal('maintenanceModal'); _tabLoadedAt.maintenance = 0; loadMaintenance(); }, 900);
+    setTimeout(() => { closeModal('maintenanceModal'); _tabLoadedAt.maintenance = 0; loadMaintenance(); }, 500);
   };
   const fail = e => { btn.disabled = false; toast('خطأ: ' + e.message, 'err'); };
   if (rowNum) {
