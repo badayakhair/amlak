@@ -59,6 +59,9 @@ const TC = {
 var __CONTRACTS_CACHE = null;
 var __BUILDINGS_CACHE = null;
 var __PAYMENTS_CACHE = null;
+// كاش الجلسة على مستوى الطلب الواحد: كل طلب HTTP في Apps Script = نسخة VM جديدة،
+// فيُحَلّ مرة واحدة ويُعاد استخدامه؛ يوفّر قراءات/كتابات PropertiesService المتكررة (الأبطأ).
+var __SESSION_CACHE = undefined; // undefined = لم يُحَلّ بعد ، null = حُلّ ولا توجد جلسة
 
 // ── كاش CacheService للبيانات الثابتة نسبياً (مشترك بين جميع الطلبات) ──
 function _scGet_(k){try{var v=CacheService.getScriptCache().get(k);return v?JSON.parse(v):null;}catch(e){return null;}}
@@ -896,9 +899,7 @@ function addBuilding(data) {
   const sheet = getOrCreateSheet(CFG.SHEETS.BUILDINGS,
     ['اسم المبنى','النوع','عدد الأدوار','الوحدات الإجمالية',
      'مشغولة حالياً','فارغة','نسبة الإشغال',
-     'إيجار العقود السارية','إجمالي المحصّل','نسبة التحصيل','ملاحظات']);
-  sheet.setRightToLeft(true);
-  sheet.setTabColor('#276749');
+     'إيجار العقود السارية','إجمالي المحصّل','نسبة التحصيل','ملاحظات'], '#276749');
   // تحقق من عدم التكرار
   const existing = getBuildings();
   if (existing.find(b=>b.name===data.name)) return {error:'المبنى موجود مسبقاً'};
@@ -979,9 +980,7 @@ function rebuildTenantRecords() {
   return withLock_(function(){
   const sheet = getOrCreateSheet(CFG.SHEETS.TENANTS,
     ['اسم المستأجر','رقم الجوال','عدد العقود','آخر مبنى','آخر وحدة',
-     'آخر بداية','آخر نهاية','الحالة الحالية','إجمالي المدفوع','نسبة الانتظام','ملاحظات','رقم الهوية']);
-  sheet.setRightToLeft(true);
-  sheet.setTabColor('#92400E');
+     'آخر بداية','آخر نهاية','الحالة الحالية','إجمالي المدفوع','نسبة الانتظام','ملاحظات','رقم الهوية'], '#92400E');
   // تأكد من وجود عمود الهوية
   if (sheet.getLastColumn() < 12) {
     sheet.getRange(1, 12).setValue('رقم الهوية')
@@ -1038,10 +1037,7 @@ function defaultSmsTemplates_() {
 }
 
 function ensureSmsTemplatesSheet_() {
-  const sheet = getOrCreateSheet(CFG.SHEETS.SMS_TEMPLATES, ['المفتاح','اسم القالب','نص الرسالة','آخر تعديل','بواسطة']);
-  sheet.setRightToLeft(true);
-  sheet.setFrozenRows(1);
-  sheet.setTabColor('#92400E');
+  const sheet = getOrCreateSheet(CFG.SHEETS.SMS_TEMPLATES, ['المفتاح','اسم القالب','نص الرسالة','آخر تعديل','بواسطة'], '#92400E');
 
   if (sheet.getLastRow() <= 1) {
     const labels = { renewal:'تجديد عقد', payment:'تذكير دفع', welcome:'ترحيب', expire:'إنهاء عقد', maintenance:'صيانة' };
@@ -1588,12 +1584,8 @@ function validateContractData_(data, isUpdate) {
 }
 
 function ensurePaymentsSheet() {
-  const sheet = getOrCreateSheet(CFG.SHEETS.PAYMENTS,
-    ['الوقت','المستخدم','رقم العقد','صف العقد','المستأجر','المبنى','الوحدة','مبلغ الدفعة','المسدد قبل','المسدد بعد','المتبقي بعد','ملاحظات']);
-  sheet.setRightToLeft(true);
-  sheet.setFrozenRows(1);
-  sheet.setTabColor('#2B6CB0');
-  return sheet;
+  return getOrCreateSheet(CFG.SHEETS.PAYMENTS,
+    ['الوقت','المستخدم','رقم العقد','صف العقد','المستأجر','المبنى','الوحدة','مبلغ الدفعة','المسدد قبل','المسدد بعد','المتبقي بعد','ملاحظات'], '#2B6CB0');
 }
 
 function logPayment_(d) {
@@ -1671,9 +1663,7 @@ function bumpUserPermVersion_(username) {
 
 function ensureUsersSheet() {
   const sheet = getOrCreateSheet(CFG.SHEETS.USERS,
-    ['اسم المستخدم','كلمة المرور','الاسم الكامل','الدور','البريد الإلكتروني','نشط','تاريخ الإنشاء','آخر دخول','صلاحيات مخصصة']);
-  sheet.setRightToLeft(true);
-  sheet.setTabColor('#9B1C1C');
+    ['اسم المستخدم','كلمة المرور','الاسم الكامل','الدور','البريد الإلكتروني','نشط','تاريخ الإنشاء','آخر دخول','صلاحيات مخصصة'], '#9B1C1C');
 
   // إنشاء حساب admin افتراضي إذا لم يوجد أي مستخدم
   if (sheet.getLastRow() <= 1) {
@@ -1716,6 +1706,7 @@ function logout() {
   const session = getCurrentSession();
   try { if (session && session.username) logActivity(session.username, 'خروج', 'مستخدم', 'تسجيل خروج'); } catch(e) {}
   PropertiesService.getUserProperties().deleteProperty('SESSION');
+  invalidateSessionCache_();
   return { success: true };
 }
 
@@ -1727,6 +1718,15 @@ function logout() {
 // يتحكم بتوقيت طلب الأدمن). الإصلاح الجذري المقترح مستقبلاً: تمرير الجلسة عبر متغيّر
 // داخل الطلب (module-global) بدل المخزن المشترك، أو LockService حول الاستعادة+التنفيذ.
 function getCurrentSession() {
+  if (__SESSION_CACHE !== undefined) return __SESSION_CACHE;
+  __SESSION_CACHE = _resolveCurrentSession_();
+  return __SESSION_CACHE;
+}
+
+// يُستدعى بعد أي تغيير مباشر لخاصية SESSION داخل نفس الطلب (دخول/خروج) لإبطال الكاش
+function invalidateSessionCache_() { __SESSION_CACHE = undefined; }
+
+function _resolveCurrentSession_() {
   const raw = PropertiesService.getUserProperties().getProperty('SESSION');
   if (!raw) return null;
   try {
@@ -1816,11 +1816,8 @@ function simpleHash(text) {
 // ═══════════════════════════════════════════════════════════════
 
 function ensureActivitySheet() {
-  const sheet = getOrCreateSheet(CFG.SHEETS.ACTIVITY,
-    ['الوقت','المستخدم','الإجراء','النوع','التفاصيل','عنوان IP']);
-  sheet.setRightToLeft(true);
-  sheet.setTabColor('#4A5568');
-  return sheet;
+  return getOrCreateSheet(CFG.SHEETS.ACTIVITY,
+    ['الوقت','المستخدم','الإجراء','النوع','التفاصيل','عنوان IP'], '#4A5568');
 }
 
 function logActivity(username, action, entity, details) {
@@ -2364,14 +2361,21 @@ function getTopbarAlerts() {
 // ── utils ──────────────────────────────────────
 function getSheet(name){ return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name); }
 
-function getOrCreateSheet(name, headers) {
+function getOrCreateSheet(name, headers, tabColor) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sh   = ss.getSheetByName(name);
+  const isNew = !sh;
   if (!sh) { sh = ss.insertSheet(name); }
   if (headers && sh.getLastRow()===0) {
     sh.appendRow(headers);
     sh.getRange(1,1,1,headers.length).setBackground('#1A3A5C').setFontColor('#FFFFFF').setFontWeight('bold').setHorizontalAlignment('center');
     sh.setFrozenRows(1);
+  }
+  // التنسيق (RTL ولون التبويب) يُطبَّق مرة واحدة فقط عند الإنشاء — تجنّب كتابات تنسيق
+  // بطيئة على كل عملية حفظ (كانت تُستدعى مع كل سجل نشاط/تحديث مستأجر).
+  if (isNew) {
+    sh.setRightToLeft(true);
+    if (tabColor) sh.setTabColor(tabColor);
   }
   return sh;
 }
@@ -2541,6 +2545,7 @@ function login(username, password) {
         permVersion: getUserPermVersion_(username)
       };
       PropertiesService.getUserProperties().setProperty('SESSION', JSON.stringify(session));
+      invalidateSessionCache_();
       try { logActivity(username, 'دخول', 'مستخدم', 'تسجيل دخول ناجح'); } catch(e) {}
       return { success: true, warning: (username === 'admin' && password === 'admin123') ? 'تنبيه أمني: لا تزال كلمة مرور admin الافتراضية مستخدمة. يُفضّل تغييرها فوراً من زر تغيير كلمة المرور.' : '', user: { username, name: session.name, role, perms: session.perms } };
     }
@@ -2903,9 +2908,7 @@ function updateTenantRecord(tenantName, phone) {
 
   const sheet = getOrCreateSheet(CFG.SHEETS.TENANTS,
     ['اسم المستأجر','رقم الجوال','عدد العقود','آخر مبنى','آخر وحدة',
-     'آخر بداية','آخر نهاية','الحالة الحالية','إجمالي المدفوع','نسبة الانتظام','ملاحظات','رقم الهوية']);
-  sheet.setRightToLeft(true);
-  sheet.setTabColor('#92400E');
+     'آخر بداية','آخر نهاية','الحالة الحالية','إجمالي المدفوع','نسبة الانتظام','ملاحظات','رقم الهوية'], '#92400E');
   if (sheet.getLastColumn() < 12) {
     sheet.getRange(1, 12).setValue('رقم الهوية')
       .setBackground('#1A3A5C').setFontColor('#FFFFFF').setFontWeight('bold').setHorizontalAlignment('center');
