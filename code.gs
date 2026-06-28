@@ -247,7 +247,9 @@ function getTenantHistory() {
     lastUnit:       str(r[TC.LAST_UNIT]),
     lastStart:      fmtDate(r[TC.LAST_START]),
     lastEnd:        fmtDate(r[TC.LAST_END]),
-    lastStatus:     str(r[TC.LAST_STATUS]),
+    // الحالة تُحسب حياً من تاريخ الانتهاء (مثل العقود) — حتى لا تبقى "شارف على الانتهاء"
+    // مجمّدة في الشيت بعد تجاوز العقد تاريخ انتهائه فعلياً
+    lastStatus:     autoContractStatus_(str(r[TC.LAST_STATUS]), r[TC.LAST_START], r[TC.LAST_END]),
     totalPaid:      parseNum(r[TC.TOTAL_PAID]),
     regularityScore:str(r[TC.REGULARITY_SCORE]),
     notes:          str(r[TC.NOTES]),
