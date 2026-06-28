@@ -625,7 +625,17 @@ function renderTenants() {
   // أضف الهوية من contracts إذا غير موجودة في tenants
   S.tenants.forEach(t => { if (!t.idNo && idMap[t.name]) t.idNo = idMap[t.name]; });
 
-  const data=S.tenants.filter(t=>(!q||t.name.toLowerCase().includes(q)||t.phone.includes(q)||(t.idNo&&t.idNo.includes(q)))&&(!st||t.lastStatus===st));
+  // الحالة الحية لكل مستأجر = حالة أحدث عقد له (الأحدث بداية) من S.contracts،
+  // لأن حالة العقود تُحسب زمنياً في الخادم — يمنع بقاء "شارف على الانتهاء" بعد الانتهاء فعلياً
+  const liveByTenant = {};
+  (S.contracts||[]).forEach(c => {
+    if (!c.tenant) return;
+    const cur = liveByTenant[c.tenant];
+    if (!cur || String(c.start||'') > String(cur.start||'')) liveByTenant[c.tenant] = { start: c.start||'', status: c.status };
+  });
+  const statusOf = t => (liveByTenant[t.name] ? liveByTenant[t.name].status : t.lastStatus);
+
+  const data=S.tenants.filter(t=>(!q||t.name.toLowerCase().includes(q)||t.phone.includes(q)||(t.idNo&&t.idNo.includes(q)))&&(!st||statusOf(t)===st));
   document.getElementById('tenantsBody').innerHTML=data.map(t=>`<tr>
     <td><strong>${escHtml(t.name)}</strong></td>
     <td style="direction:ltr;text-align:left;font-size:12px">${escHtml(t.idNo)||'—'}</td>
@@ -634,7 +644,7 @@ function renderTenants() {
     <td>${escHtml(t.lastBuilding)||'—'}</td><td>${escHtml(t.lastUnit)||'—'}</td>
     <td>${t.totalPaid?nf(t.totalPaid)+' ر.س':'—'}</td>
     <td>${escHtml(t.regularityScore)||'—'}</td>
-    <td>${statusBadge(t.lastStatus)}</td>
+    <td>${statusBadge(statusOf(t))}</td>
     <td><button class="btn btn-sm btn-primary" onclick="showTenantHistory('${esc(t.name)}')">السجل</button></td>
   </tr>`).join('')||'<tr><td colspan="9" style="text-align:center;padding:20px;color:#718096">لا توجد بيانات</td></tr>';
 }
