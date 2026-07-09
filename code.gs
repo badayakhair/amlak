@@ -411,6 +411,36 @@ function buildOccupancySummary_(contracts, buildings) {
 }
 
 
+// حساب موحّد لمالية السنة الحالية — يُستخدم في لوحة التحكم (getDashboardStats) وقسم المالية
+// (getFinancialStats) لضمان تطابق الأرقام في كل الشاشات.
+// • المتوقع: من كل العقود، موزّعاً على الأشهر بنسبة الأيام النشطة (يشمل الجزء المستحق من
+//   العقود المنتهية خلال السنة) — بنفس منطق قسم المالية.
+// • المحصّل: مجموع كل الدفعات المؤرَّخة في السنة الحالية من سجل الدفعات فقط (المصدر الوحيد
+//   للحقيقة) — لا يُحتسب رصيد افتتاحي أُدخل في حقل "المدفوع" دون دفعة مؤرَّخة.
+function computeYearFinancials_(contracts, payments, thisYear, monthOneBased) {
+  var annualExpectedRaw = 0, monthlyExpectedRaw = 0;
+  (contracts || []).forEach(function(c) {
+    if (!c.start || !c.rent) return;
+    for (var m = 1; m <= 12; m++) {
+      var e = contractExpectedForMonth_(c, thisYear, m);
+      annualExpectedRaw += e;
+      if (m === monthOneBased) monthlyExpectedRaw += e;
+    }
+  });
+  var collectedRaw = 0;
+  (payments || []).forEach(function(p) {
+    var d = parseStoredDate_(p.date);
+    if (d && d.getFullYear() === thisYear) collectedRaw += p.amount;
+  });
+  return {
+    annualExpected:  Math.round(annualExpectedRaw),
+    monthlyExpected: Math.round(monthlyExpectedRaw),
+    collected:       Math.round(collectedRaw),
+    remaining:       Math.round(annualExpectedRaw - collectedRaw),
+    collectRate:     annualExpectedRaw > 0 ? Math.round(collectedRaw / annualExpectedRaw * 100) : 0
+  };
+}
+
 function getDashboardStats() {
   const auth = requireLogin_(); if (auth) return auth;
   var _dck = 'dash_v1_' + (hasPermission('finance.view') ? '1' : '0');
@@ -451,10 +481,12 @@ function getDashboardStats() {
     return (c.id && paidThisYearByContractId[c.id]) || paidThisYearByRow[c.row] || 0;
   }
 
-  // المالي يعتمد على العقود المشغولة فقط: ساري + شارف على الانتهاء
-  const annualRent  = Math.round(occupiedContracts.reduce(function(sum, c) { return sum + expectedForCurrentYear_(c); }, 0));
-  const monthlyRent = Math.round(occupiedContracts.reduce(function(sum, c) { return sum + contractExpectedForMonth_(c, thisYear, thisMonth); }, 0));
-  const totalPaid   = Math.round(occupiedContracts.reduce(function(sum, c) { return sum + paidForCurrentYear_(c); }, 0));
+  // مالية السنة موحّدة مع قسم المالية (نفس الأساس ونفس الأرقام في كل الشاشات):
+  // المتوقع من كل العقود موزّعاً شهرياً، والمحصّل الفعلي من سجل الدفعات لهذا العام.
+  const _yf = computeYearFinancials_(contracts, payments, thisYear, thisMonth);
+  const annualRent  = _yf.annualExpected;
+  const monthlyRent = _yf.monthlyExpected;
+  const totalPaid   = _yf.collected;
 
   // ملخص إشغال موحّد لكل النظام
   const occupancy = buildOccupancySummary_(contracts, buildings);
@@ -527,8 +559,8 @@ function getDashboardStats() {
       monthlyRent: monthlyRent,
       totalRent: annualRent,
       totalPaid: totalPaid,
-      remaining: Math.round(annualRent - totalPaid),
-      collectRate: annualRent > 0 ? Math.round(totalPaid / annualRent * 100) : 0
+      remaining: _yf.remaining,
+      collectRate: _yf.collectRate
     } : {
       annualRent: 0, monthlyRent: 0, totalRent: 0, totalPaid: 0, remaining: 0, collectRate: 0
     },
@@ -607,8 +639,10 @@ function getFinancialStats() {
     // يبقى المحصل الشهري/السنوي صفراً حتى تُسجل الدفعات في سجل_الدفعات.
   }
 
+  // المحصّل الفعلي لكامل السنة الحالية (كل الأشهر) — لا يُقصَر على الشهر الحالي حتى يتطابق
+  // مع لوحة التحكم وجدولَي الأشهر/السنوات، ولا تُستبعد أي دفعة مؤرَّخة في السنة نفسها.
   let yearCollected = 0;
-  for (let m = 1; m <= thisMonth + 1; m++) yearCollected += monthlyData[m].collected;
+  for (let m = 1; m <= 12; m++) yearCollected += monthlyData[m].collected;
   let yearExpected = 0;
   for (let m = 1; m <= 12; m++) yearExpected += monthlyData[m].expected;
 
