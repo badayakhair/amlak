@@ -1950,7 +1950,7 @@ function logActivity(username, action, entity, details) {
   try {
     const sheet = ensureActivitySheet();
     sheet.appendRow([
-      fmtDatetime(new Date()),
+      new Date(),   // لحظة فعلية غير ملتبسة؛ تُنسَّق عند العرض بتوقيت الرياض (+3)
       sanitizeCell_(username || '—'),
       sanitizeCell_(action || ''),
       sanitizeCell_(entity || ''),
@@ -2109,7 +2109,7 @@ function getBackupStatus() {
       rows.reverse().forEach(function(r) {
         if (String(r[2]||'') === 'نسخ احتياطي') {
           count++;
-          if (!lastBackup) lastBackup = String(r[0]||'');
+          if (!lastBackup) lastBackup = fmtDatetime(parseStoredDate_(r[0]));
         }
       });
     }
@@ -2939,7 +2939,8 @@ function getActivityLog(limit) {
   const take = Math.min(limit, lastRow - 1);
   const start = Math.max(2, lastRow - take + 1);
   const data = sheet.getRange(start, 1, take, Math.max(5, sheet.getLastColumn())).getValues();
-  var result = data.reverse().map(r => ({ time:str(r[AC.TIMESTAMP]), username:str(r[AC.USERNAME]), action:str(r[AC.ACTION]), entity:str(r[AC.ENTITY]), details:str(r[AC.DETAILS]) }));
+  // التوقيت يُنسَّق دائماً بتوقيت الرياض (yyyy/MM/dd HH:mm) بدل عرض كائن التاريخ الخام
+  var result = data.reverse().map(r => ({ time:fmtDatetime(parseStoredDate_(r[AC.TIMESTAMP])), username:str(r[AC.USERNAME]), action:str(r[AC.ACTION]), entity:str(r[AC.ENTITY]), details:str(r[AC.DETAILS]) }));
   _scSet_('ACTIVITY_LOG', result, 120);
   return result;
 }
