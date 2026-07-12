@@ -1072,6 +1072,74 @@ function rebuildTenantRecords() {
   return {success:true, count:Object.keys(tenantMap).length};
   });
 }
+
+// ───────────────────────────────────────────────
+// تسوية أولية آلية للأرصدة الافتتاحية
+// ───────────────────────────────────────────────
+// تُشغَّل لمرة واحدة من محرِّر Apps Script (Run) — لا تحتاج جلسة، وليست مُسجَّلة في APIDispatcher
+// فلا يمكن استدعاؤها من الويب. تقرأ الشيتات مباشرةً.
+//
+// الغرض: المبالغ التي أُدخلت في حقل "المدفوع" عند كتابة العقد (أرصدة افتتاحية) لا تظهر في
+// "ما تم تحصيله" لأنها ليست دفعات مؤرَّخة في سجل الدفعات. هذه الدالة تسجّلها كدفعات بتاريخ
+// بداية كل عقد، فتظهر في المحصّل ضمن سنة بداية العقد.
+//
+// آمنة وقابلة للتكرار (idempotent): تسجّل فقط الفرق غير المسجَّل = المدفوع − المسجَّل مسبقاً،
+// فتشغيلها مرتين لا يُكرّر أي مبلغ. تعمل على العقود القائمة فقط (تتجاهل المحذوفة مبدئياً).
+// خطوات آمنة قبل التشغيل: خذ نسخة احتياطية (backupNow). الإدخالات تحمل ملاحظة مميّزة
+// "رصيد افتتاحي (تسوية أولية آلية)" لتمييزها/إزالتها يدوياً عند الحاجة.
+function backfillOpeningBalances() {
+  const cSheet = getSheet(CFG.SHEETS.CONTRACTS);
+  if (!cSheet || cSheet.getLastRow() < 2) return { success: false, error: 'لا توجد عقود' };
+  const cRows = cSheet.getDataRange().getValues();
+
+  // اجمع المبالغ المسجَّلة مسبقاً لكل عقد من سجل الدفعات (بالمعرّف أساساً، وبالصف احتياطاً)
+  const pSheet = getSheet(CFG.SHEETS.PAYMENTS);
+  const loggedById = {}, loggedByRow = {};
+  if (pSheet && pSheet.getLastRow() >= 2) {
+    const pRows = pSheet.getDataRange().getValues();
+    for (let i = 1; i < pRows.length; i++) {
+      const cid = String(pRows[i][PC.CONTRACT_ID] || '');
+      const rw  = String(pRows[i][PC.ROW] || '');
+      const amt = parseNum(pRows[i][PC.AMOUNT]);
+      if (cid) loggedById[cid] = (loggedById[cid] || 0) + amt;
+      if (rw)  loggedByRow[rw] = (loggedByRow[rw] || 0) + amt;
+    }
+  }
+
+  const newRows = [];
+  let count = 0, total = 0;
+  for (let i = 1; i < cRows.length; i++) {
+    const r = cRows[i];
+    if (isContractDeletedRow_(r)) continue;
+    const paid = parseNum(r[C.PAID]);
+    if (paid <= 0) continue;
+    const id = String(r[C.ID] || '');
+    const rowNum = i + 1; // صف الشيت (الرأس في الصف 1)
+    const logged = (id && loggedById[id]) || loggedByRow[String(rowNum)] || 0;
+    const opening = paid - logged;
+    if (opening <= 0.01) continue; // مُسجَّل بالكامل — لا شيء نضيفه
+    const rent = parseNum(r[C.RENT]);
+    const sd = r[C.START] ? new Date(r[C.START]) : null;
+    const ts = (sd && !isNaN(sd.getTime())) ? fmtDatetime(sd) : fmtDatetime(new Date());
+    newRows.push([
+      ts, 'system', sanitizeCell_(id), rowNum, sanitizeCell_(str(r[C.TENANT])),
+      sanitizeCell_(str(r[C.BUILDING])), sanitizeCell_(str(r[C.UNIT])),
+      opening, logged, paid, Math.max(0, rent - paid),
+      'رصيد افتتاحي (تسوية أولية آلية)'
+    ]);
+    count++; total += opening;
+  }
+
+  if (newRows.length) {
+    const ps = ensurePaymentsSheet();
+    ps.getRange(ps.getLastRow() + 1, 1, newRows.length, 12).setValues(newRows);
+    SpreadsheetApp.flush();
+  }
+  __PAYMENTS_CACHE = null;
+  invalidateRuntimeCaches_();
+  try { logActivity('system', 'تسوية', 'دفعات', 'تسجيل أرصدة افتتاحية: ' + count + ' عقد — إجمالي ' + Math.round(total) + ' ر.س'); } catch(e) {}
+  return { success: true, count: count, total: Math.round(total) };
+}
 // [تم حذف نسخة مكررة قديمة من الدالة: askAI]
 
 function craftMsg(name, situation, rent, days) {
@@ -3012,6 +3080,24 @@ function addContract(data) {
     if (data.building) ensureBuildingExists(data.building, data.type || 'سكني');
     const row = buildContractRow(data);
     sheet.appendRow(row);
+    // سجّل الرصيد الافتتاحي (المبلغ المُدخل كمدفوع عند الإنشاء) كدفعة مؤرَّخة بتاريخ بداية العقد،
+    // حتى يظهر ضمن "ما تم تحصيله". مغلّف بـ try — لا يُعطّل إنشاء العقد إن فشل التسجيل.
+    const _paidInit = parseNum(data.paid);
+    if (_paidInit > 0) {
+      try {
+        const _rowNum = sheet.getLastRow();
+        const _sd = data.start ? new Date(data.start) : null;
+        const _ts = (_sd && !isNaN(_sd.getTime())) ? fmtDatetime(_sd) : fmtDatetime(new Date());
+        const _rent = parseNum(data.rent);
+        __PAYMENTS_CACHE = null;
+        ensurePaymentsSheet().appendRow([
+          _ts, currentUser() || 'system', sanitizeCell_(str(row[C.ID])), _rowNum,
+          sanitizeCell_(data.tenant), sanitizeCell_(data.building), sanitizeCell_(data.unit),
+          _paidInit, 0, _paidInit, Math.max(0, _rent - _paidInit),
+          'رصيد افتتاحي (عند إنشاء العقد)'
+        ]);
+      } catch(e) {}
+    }
     invalidateRuntimeCaches_();
     updateTenantRecord(data.tenant, data.phone);
     try { logActivity(currentUser() || 'system', 'إضافة', 'عقود', 'عقد جديد: ' + (data.tenant || '') + ' — ' + (data.building || '') + '/' + (data.unit || '')); } catch(e) {}
