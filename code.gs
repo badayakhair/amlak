@@ -411,13 +411,32 @@ function buildOccupancySummary_(contracts, buildings) {
 }
 
 
+// مجموعة معرّفات/صفوف العقود القائمة (getContracts يستبعد المحذوف مبدئياً).
+// تُستخدم لاستبعاد دفعات العقود المحذوفة من حسابات المحصّل عند القراءة فقط،
+// دون حذف أي صف من سجل الدفعات — فإذا اُسترجع العقد عادت دفعاته للاحتساب.
+function _liveContractSets_(contracts) {
+  var ids = {}, rows = {};
+  (contracts || []).forEach(function(c) {
+    if (c.id) ids[String(c.id)] = true;
+    if (c.row) rows[String(c.row)] = true;
+  });
+  return { ids: ids, rows: rows };
+}
+function _paymentOnLiveContract_(p, live) {
+  if (!p) return false;
+  if (p.contractId) return !!live.ids[String(p.contractId)];   // المفتاح الأساسي: معرّف العقد
+  return !!(p.row && live.rows[String(p.row)]);                 // دفعات قديمة بلا معرّف: مطابقة بالصف
+}
+
 // حساب موحّد لمالية السنة الحالية — يُستخدم في لوحة التحكم (getDashboardStats) وقسم المالية
 // (getFinancialStats) لضمان تطابق الأرقام في كل الشاشات.
 // • المتوقع: من كل العقود، موزّعاً على الأشهر بنسبة الأيام النشطة (يشمل الجزء المستحق من
 //   العقود المنتهية خلال السنة) — بنفس منطق قسم المالية.
-// • المحصّل: مجموع كل الدفعات المؤرَّخة في السنة الحالية من سجل الدفعات فقط (المصدر الوحيد
-//   للحقيقة) — لا يُحتسب رصيد افتتاحي أُدخل في حقل "المدفوع" دون دفعة مؤرَّخة.
+// • المحصّل: مجموع الدفعات المؤرَّخة في السنة الحالية من سجل الدفعات، للعقود القائمة فقط
+//   (المصدر الوحيد للحقيقة) — لا يُحتسب رصيد افتتاحي أُدخل في حقل "المدفوع" دون دفعة مؤرَّخة،
+//   ولا دفعات عقود محذوفة/تجريبية.
 function computeYearFinancials_(contracts, payments, thisYear, monthOneBased) {
+  var live = _liveContractSets_(contracts);
   var annualExpectedRaw = 0, monthlyExpectedRaw = 0;
   (contracts || []).forEach(function(c) {
     if (!c.start || !c.rent) return;
@@ -429,6 +448,7 @@ function computeYearFinancials_(contracts, payments, thisYear, monthOneBased) {
   });
   var collectedRaw = 0;
   (payments || []).forEach(function(p) {
+    if (!_paymentOnLiveContract_(p, live)) return;   // تجاهل دفعات العقود المحذوفة
     var d = parseStoredDate_(p.date);
     if (d && d.getFullYear() === thisYear) collectedRaw += p.amount;
   });
@@ -618,12 +638,14 @@ function getFinancialStats() {
     });
   });
 
-  // التحصيل الشهري والسنوي من سجل الدفعات الفعلي فقط حسب تاريخ الدفعة.
+  // التحصيل الشهري والسنوي من سجل الدفعات الفعلي فقط حسب تاريخ الدفعة، وللعقود القائمة فقط
+  // (تُستبعد دفعات العقود المحذوفة/التجريبية حتى لا يتضخّم المحصّل — نفس أساس لوحة التحكم).
   // إذا كان سجل الدفعات فارغاً، لا نخمن ولا ننقل أرصدة قديمة إلى الشهر الحالي.
-  // تظهر التحصيلات صفراً مع تنبيه للمستخدم حتى يبدأ استخدام سجل_الدفعات.
+  const _liveFin = _liveContractSets_(contracts);
   const hasPaymentLog = payments.length > 0;
   if (hasPaymentLog) {
     payments.forEach(function(p) {
+      if (!_paymentOnLiveContract_(p, _liveFin)) return;
       const pDate = parseStoredDate_(p.date);
       if (!pDate) return;
       const y = pDate.getFullYear();
