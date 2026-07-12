@@ -411,13 +411,32 @@ function buildOccupancySummary_(contracts, buildings) {
 }
 
 
+// مجموعة معرّفات/صفوف العقود القائمة (getContracts يستبعد المحذوف مبدئياً).
+// تُستخدم لاستبعاد دفعات العقود المحذوفة من حسابات المحصّل عند القراءة فقط،
+// دون حذف أي صف من سجل الدفعات — فإذا اُسترجع العقد عادت دفعاته للاحتساب.
+function _liveContractSets_(contracts) {
+  var ids = {}, rows = {};
+  (contracts || []).forEach(function(c) {
+    if (c.id) ids[String(c.id)] = true;
+    if (c.row) rows[String(c.row)] = true;
+  });
+  return { ids: ids, rows: rows };
+}
+function _paymentOnLiveContract_(p, live) {
+  if (!p) return false;
+  if (p.contractId) return !!live.ids[String(p.contractId)];   // المفتاح الأساسي: معرّف العقد
+  return !!(p.row && live.rows[String(p.row)]);                 // دفعات قديمة بلا معرّف: مطابقة بالصف
+}
+
 // حساب موحّد لمالية السنة الحالية — يُستخدم في لوحة التحكم (getDashboardStats) وقسم المالية
 // (getFinancialStats) لضمان تطابق الأرقام في كل الشاشات.
 // • المتوقع: من كل العقود، موزّعاً على الأشهر بنسبة الأيام النشطة (يشمل الجزء المستحق من
 //   العقود المنتهية خلال السنة) — بنفس منطق قسم المالية.
-// • المحصّل: مجموع كل الدفعات المؤرَّخة في السنة الحالية من سجل الدفعات فقط (المصدر الوحيد
-//   للحقيقة) — لا يُحتسب رصيد افتتاحي أُدخل في حقل "المدفوع" دون دفعة مؤرَّخة.
+// • المحصّل: مجموع الدفعات المؤرَّخة في السنة الحالية من سجل الدفعات، للعقود القائمة فقط
+//   (المصدر الوحيد للحقيقة) — لا يُحتسب رصيد افتتاحي أُدخل في حقل "المدفوع" دون دفعة مؤرَّخة،
+//   ولا دفعات عقود محذوفة/تجريبية.
 function computeYearFinancials_(contracts, payments, thisYear, monthOneBased) {
+  var live = _liveContractSets_(contracts);
   var annualExpectedRaw = 0, monthlyExpectedRaw = 0;
   (contracts || []).forEach(function(c) {
     if (!c.start || !c.rent) return;
@@ -429,6 +448,7 @@ function computeYearFinancials_(contracts, payments, thisYear, monthOneBased) {
   });
   var collectedRaw = 0;
   (payments || []).forEach(function(p) {
+    if (!_paymentOnLiveContract_(p, live)) return;   // تجاهل دفعات العقود المحذوفة
     var d = parseStoredDate_(p.date);
     if (d && d.getFullYear() === thisYear) collectedRaw += p.amount;
   });
@@ -618,12 +638,14 @@ function getFinancialStats() {
     });
   });
 
-  // التحصيل الشهري والسنوي من سجل الدفعات الفعلي فقط حسب تاريخ الدفعة.
+  // التحصيل الشهري والسنوي من سجل الدفعات الفعلي فقط حسب تاريخ الدفعة، وللعقود القائمة فقط
+  // (تُستبعد دفعات العقود المحذوفة/التجريبية حتى لا يتضخّم المحصّل — نفس أساس لوحة التحكم).
   // إذا كان سجل الدفعات فارغاً، لا نخمن ولا ننقل أرصدة قديمة إلى الشهر الحالي.
-  // تظهر التحصيلات صفراً مع تنبيه للمستخدم حتى يبدأ استخدام سجل_الدفعات.
+  const _liveFin = _liveContractSets_(contracts);
   const hasPaymentLog = payments.length > 0;
   if (hasPaymentLog) {
     payments.forEach(function(p) {
+      if (!_paymentOnLiveContract_(p, _liveFin)) return;
       const pDate = parseStoredDate_(p.date);
       if (!pDate) return;
       const y = pDate.getFullYear();
@@ -1049,6 +1071,74 @@ function rebuildTenantRecords() {
   _scDel_('tnt_v1');
   return {success:true, count:Object.keys(tenantMap).length};
   });
+}
+
+// ───────────────────────────────────────────────
+// تسوية أولية آلية للأرصدة الافتتاحية
+// ───────────────────────────────────────────────
+// تُشغَّل لمرة واحدة من محرِّر Apps Script (Run) — لا تحتاج جلسة، وليست مُسجَّلة في APIDispatcher
+// فلا يمكن استدعاؤها من الويب. تقرأ الشيتات مباشرةً.
+//
+// الغرض: المبالغ التي أُدخلت في حقل "المدفوع" عند كتابة العقد (أرصدة افتتاحية) لا تظهر في
+// "ما تم تحصيله" لأنها ليست دفعات مؤرَّخة في سجل الدفعات. هذه الدالة تسجّلها كدفعات بتاريخ
+// بداية كل عقد، فتظهر في المحصّل ضمن سنة بداية العقد.
+//
+// آمنة وقابلة للتكرار (idempotent): تسجّل فقط الفرق غير المسجَّل = المدفوع − المسجَّل مسبقاً،
+// فتشغيلها مرتين لا يُكرّر أي مبلغ. تعمل على العقود القائمة فقط (تتجاهل المحذوفة مبدئياً).
+// خطوات آمنة قبل التشغيل: خذ نسخة احتياطية (backupNow). الإدخالات تحمل ملاحظة مميّزة
+// "رصيد افتتاحي (تسوية أولية آلية)" لتمييزها/إزالتها يدوياً عند الحاجة.
+function backfillOpeningBalances() {
+  const cSheet = getSheet(CFG.SHEETS.CONTRACTS);
+  if (!cSheet || cSheet.getLastRow() < 2) return { success: false, error: 'لا توجد عقود' };
+  const cRows = cSheet.getDataRange().getValues();
+
+  // اجمع المبالغ المسجَّلة مسبقاً لكل عقد من سجل الدفعات (بالمعرّف أساساً، وبالصف احتياطاً)
+  const pSheet = getSheet(CFG.SHEETS.PAYMENTS);
+  const loggedById = {}, loggedByRow = {};
+  if (pSheet && pSheet.getLastRow() >= 2) {
+    const pRows = pSheet.getDataRange().getValues();
+    for (let i = 1; i < pRows.length; i++) {
+      const cid = String(pRows[i][PC.CONTRACT_ID] || '');
+      const rw  = String(pRows[i][PC.ROW] || '');
+      const amt = parseNum(pRows[i][PC.AMOUNT]);
+      if (cid) loggedById[cid] = (loggedById[cid] || 0) + amt;
+      if (rw)  loggedByRow[rw] = (loggedByRow[rw] || 0) + amt;
+    }
+  }
+
+  const newRows = [];
+  let count = 0, total = 0;
+  for (let i = 1; i < cRows.length; i++) {
+    const r = cRows[i];
+    if (isContractDeletedRow_(r)) continue;
+    const paid = parseNum(r[C.PAID]);
+    if (paid <= 0) continue;
+    const id = String(r[C.ID] || '');
+    const rowNum = i + 1; // صف الشيت (الرأس في الصف 1)
+    const logged = (id && loggedById[id]) || loggedByRow[String(rowNum)] || 0;
+    const opening = paid - logged;
+    if (opening <= 0.01) continue; // مُسجَّل بالكامل — لا شيء نضيفه
+    const rent = parseNum(r[C.RENT]);
+    const sd = r[C.START] ? new Date(r[C.START]) : null;
+    const ts = (sd && !isNaN(sd.getTime())) ? fmtDatetime(sd) : fmtDatetime(new Date());
+    newRows.push([
+      ts, 'system', sanitizeCell_(id), rowNum, sanitizeCell_(str(r[C.TENANT])),
+      sanitizeCell_(str(r[C.BUILDING])), sanitizeCell_(str(r[C.UNIT])),
+      opening, logged, paid, Math.max(0, rent - paid),
+      'رصيد افتتاحي (تسوية أولية آلية)'
+    ]);
+    count++; total += opening;
+  }
+
+  if (newRows.length) {
+    const ps = ensurePaymentsSheet();
+    ps.getRange(ps.getLastRow() + 1, 1, newRows.length, 12).setValues(newRows);
+    SpreadsheetApp.flush();
+  }
+  __PAYMENTS_CACHE = null;
+  invalidateRuntimeCaches_();
+  try { logActivity('system', 'تسوية', 'دفعات', 'تسجيل أرصدة افتتاحية: ' + count + ' عقد — إجمالي ' + Math.round(total) + ' ر.س'); } catch(e) {}
+  return { success: true, count: count, total: Math.round(total) };
 }
 // [تم حذف نسخة مكررة قديمة من الدالة: askAI]
 
@@ -2990,6 +3080,24 @@ function addContract(data) {
     if (data.building) ensureBuildingExists(data.building, data.type || 'سكني');
     const row = buildContractRow(data);
     sheet.appendRow(row);
+    // سجّل الرصيد الافتتاحي (المبلغ المُدخل كمدفوع عند الإنشاء) كدفعة مؤرَّخة بتاريخ بداية العقد،
+    // حتى يظهر ضمن "ما تم تحصيله". مغلّف بـ try — لا يُعطّل إنشاء العقد إن فشل التسجيل.
+    const _paidInit = parseNum(data.paid);
+    if (_paidInit > 0) {
+      try {
+        const _rowNum = sheet.getLastRow();
+        const _sd = data.start ? new Date(data.start) : null;
+        const _ts = (_sd && !isNaN(_sd.getTime())) ? fmtDatetime(_sd) : fmtDatetime(new Date());
+        const _rent = parseNum(data.rent);
+        __PAYMENTS_CACHE = null;
+        ensurePaymentsSheet().appendRow([
+          _ts, currentUser() || 'system', sanitizeCell_(str(row[C.ID])), _rowNum,
+          sanitizeCell_(data.tenant), sanitizeCell_(data.building), sanitizeCell_(data.unit),
+          _paidInit, 0, _paidInit, Math.max(0, _rent - _paidInit),
+          'رصيد افتتاحي (عند إنشاء العقد)'
+        ]);
+      } catch(e) {}
+    }
     invalidateRuntimeCaches_();
     updateTenantRecord(data.tenant, data.phone);
     try { logActivity(currentUser() || 'system', 'إضافة', 'عقود', 'عقد جديد: ' + (data.tenant || '') + ' — ' + (data.building || '') + '/' + (data.unit || '')); } catch(e) {}
